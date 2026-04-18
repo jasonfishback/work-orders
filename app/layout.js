@@ -1,8 +1,12 @@
 export const metadata = {
-  title: 'Simon Express — Work Orders',
-  description: 'Shop work order submission for Simon Express',
+  title: 'Simon Express — Work Ticket',
+  description: 'Shop work ticket submission for Simon Express',
   manifest: '/manifest.json',
-  appleWebApp: { capable: true, title: 'SE Work Orders', statusBarStyle: 'black-translucent' },
+  appleWebApp: {
+    capable: true,
+    title: 'SE Tickets',
+    statusBarStyle: 'black-translucent',
+  },
 }
 
 export default function RootLayout({ children }) {
