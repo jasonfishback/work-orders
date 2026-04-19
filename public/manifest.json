@@ -1,0 +1,10 @@
+{
+  "name": "Simon Express Work Orders",
+  "short_name": "SE Work Orders",
+  "description": "Shop work order submission",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f0f0f0",
+  "theme_color": "#111",
+  "icons": []
+}
