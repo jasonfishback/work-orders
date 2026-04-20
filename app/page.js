@@ -61,12 +61,33 @@ export default function TicketPage() {
     setLineItems(prev => prev.map(i => i.id === id ? { ...i, [field]: val } : i))
   }
 
-  function handlePhotos(e) {
-    Array.from(e.target.files).forEach(file => {
-      if (!file.type.startsWith('image/')) return
-      const reader = new FileReader()
-      reader.onload = ev => setPhotos(p => [...p, { name: file.name, dataUrl: ev.target.result }])
+    function compressImage(file) {
+    return new Promise(function(resolve) {
+      var reader = new FileReader()
+      reader.onload = function(ev) {
+        var img = new Image()
+        img.onload = function() {
+          var MAX = 1200
+          var w = img.width, h = img.height
+          if (w > MAX || h > MAX) {
+            if (w > h) { h = Math.round(h * MAX / w); w = MAX }
+            else { w = Math.round(w * MAX / h); h = MAX }
+          }
+          var canvas = document.createElement('canvas')
+          canvas.width = w; canvas.height = h
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h)
+          resolve({ name: file.name, dataUrl: canvas.toDataURL('image/jpeg', 0.75) })
+        }
+        img.src = ev.target.result
+      }
       reader.readAsDataURL(file)
+    })
+  }
+
+  function handlePhotos(e) {
+    Array.from(e.target.files).forEach(function(file) {
+      if (!file.type.startsWith('image/')) return
+      compressImage(file).then(function(photo) { setPhotos(function(p) { return [...p, photo] }) })
     })
     e.target.value = ''
   }
