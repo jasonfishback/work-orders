@@ -169,7 +169,7 @@ export default function TicketPage() {
                   <input type="text" placeholder="Enter full name" value={otherName} onChange={e => setOtherName(e.target.value)} />
                 </div>
                 <div className="field">
-                  <label>Email — will be CC'd <span className="req">*</span></label>
+                  <label>Email â will be CC'd <span className="req">*</span></label>
                   <input type="email" inputMode="email" placeholder="email@example.com" value={otherEmail} onChange={e => setOtherEmail(e.target.value)} />
                   {otherEmail && (
                     <div className="cc-chips" style={{ marginTop: '6px' }}>
@@ -202,7 +202,7 @@ export default function TicketPage() {
           <div className="card">
             <div className="line-header">
               <span className="sec-lbl" style={{ margin: 0 }}>Line Items <span className="req">*</span></span>
-              <span className="col-hint">Description · Hours</span>
+              <span className="col-hint">Description Â· Hours</span>
             </div>
             <div className="line-items">
               {lineItems.map(item => (
@@ -214,7 +214,7 @@ export default function TicketPage() {
                     <input className="li-hrs" type="number" inputMode="decimal" placeholder="0" min="0" step="0.25"
                       value={item.hours} onChange={e => updateLine(item.id, 'hours', e.target.value)} />
                   </div>
-                  <button className="li-rm" onClick={() => removeLine(item.id)} title="Remove">×</button>
+                  <button className="li-rm" onClick={() => removeLine(item.id)} title="Remove">Ã</button>
                 </div>
               ))}
             </div>
@@ -252,19 +252,19 @@ export default function TicketPage() {
           <p className="sec-lbl">Photos</p>
           <div className="card">
             <div className="upload-zone" onClick={() => fileRef.current.click()}>
-              <input ref={fileRef} type="file" accept="image/*" multiple capture="environment" onChange={handlePhotos} style={{ display: 'none' }} />
+              <input ref={fileRef} type="file" accept="image/*" multiple onChange={handlePhotos} style={{ display: 'none' }} />
               <div className="upload-icon">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#c00" strokeWidth="2" strokeLinecap="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
               </div>
               <p className="upload-title">Tap to photograph or upload</p>
-              <p className="upload-sub">Images · Multiple photos OK</p>
+              <p className="upload-sub">Images Â· Multiple photos OK</p>
             </div>
             {photos.length > 0 && (
               <div className="thumbs">
                 {photos.map((p, i) => (
                   <div key={i} className="thumb">
                     <img src={p.dataUrl} alt={p.name} />
-                    <button className="thumb-rm" onClick={() => setPhotos(ph => ph.filter((_, idx) => idx !== i))}>×</button>
+                    <button className="thumb-rm" onClick={() => setPhotos(ph => ph.filter((_, idx) => idx !== i))}>Ã</button>
                   </div>
                 ))}
               </div>
@@ -315,10 +315,10 @@ export default function TicketPage() {
                   <div>
                     <div className="price-lbl">Estimated Total</div>
                     <div className="price-note">
-                      {showTotal ? `${totalHours} hrs × $${parseFloat(hourlyRate).toFixed(2)}/hr` : 'Add hours to line items above'}
+                      {showTotal ? `${totalHours} hrs Ã $${parseFloat(hourlyRate).toFixed(2)}/hr` : 'Add hours to line items above'}
                     </div>
                   </div>
-                  <div className="price-val">{showTotal ? `$${totalAmount}` : '—'}</div>
+                  <div className="price-val">{showTotal ? `$${totalAmount}` : 'â'}</div>
                 </div>
               </div>
             )}
@@ -335,9 +335,9 @@ export default function TicketPage() {
               </>
             )}
           </button>
-          <p className="dest-note">Sends to: jfishback@simonexpress.com · CC: person who completed work</p>
+          <p className="dest-note">Sends to: jfishback@simonexpress.com Â· CC: person who completed work</p>
           {errors.length > 0 && (
-            <div className="err-box">{errors.map((e, i) => <div key={i}>⚠ {e}</div>)}</div>
+            <div className="err-box">{errors.map((e, i) => <div key={i}>â  {e}</div>)}</div>
           )}
           {success && (
             <div className="ok-box">Work order submitted! The team has been notified and a PDF invoice has been emailed.</div>
