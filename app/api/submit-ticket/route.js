@@ -107,7 +107,7 @@ async function buildInvoicePdf(data, invoiceNum) {
   text(p1, 'Date Completed: ' + dateCompleted, ML + 130, y - 17, 9, bold, WHITE)
   if (personKey === 'split') {
     const spLabel = 'SPLIT PAY INVOICE'
-    text(p1, spLabel, W - MR - bold.widthOfTextAtSize(spLabel, 8) - 10, y - 17, 8, bold, rgb(0.4, 0.7, 1.0))
+    text(p1, spLabel, W - MR - bold.widthOfTextAtSize(spLabel, 8) - 10, y - 17, 8, bold, RED)
   }
   y -= 26
 
@@ -190,7 +190,7 @@ async function buildInvoicePdf(data, invoiceNum) {
     drawRect(p1, ML, y - 26, CW, 26, NAVY, undefined)
     text(p1, 'PAYMENT BREAKDOWN  -  50/50 SPLIT', ML + 10, y - 17, 9, bold, WHITE)
     const spW = bold.widthOfTextAtSize('SPLIT PAY INVOICE', 8)
-    text(p1, 'SPLIT PAY INVOICE', W - MR - spW - 10, y - 17, 8, bold, rgb(0.4, 0.7, 1.0))
+    text(p1, 'SPLIT PAY INVOICE', W - MR - spW - 10, y - 17, 8, bold, RED)
     y -= 26
     const bw = (CW - 10) / 2
     // Jaden box
@@ -340,7 +340,7 @@ export async function POST(request) {
     <div style="margin:20px 0;border-radius:8px;overflow:hidden;border:1px solid #ddd;">
       <div style="background:#1a1a2e;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;">
         <span style="color:#fff;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;">Payment Breakdown - 50/50 Split</span>
-        <span style="color:#66b3ff;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;">SPLIT PAY INVOICE</span>
+        <span style="color:#CC0000;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;">SPLIT PAY INVOICE</span>
       </div>
       <table style="width:100%;border-collapse:collapse;">
         <tr>
