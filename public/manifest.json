@@ -1,10 +1,24 @@
 {
-  "name": "Simon Express Work Orders",
-  "short_name": "SE Work Orders",
-  "description": "Shop work order submission",
+  "name": "Simon Work Orders",
+  "short_name": "Simon Work Orders",
+  "description": "Shop work order submission for Simon Express",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f0f0f0",
-  "theme_color": "#111",
-  "icons": []
+  "background_color": "#111111",
+  "theme_color": "#111111",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
 }
