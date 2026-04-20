@@ -169,7 +169,7 @@ export default function TicketPage() {
                   <input type="text" placeholder="Enter full name" value={otherName} onChange={e => setOtherName(e.target.value)} />
                 </div>
                 <div className="field">
-                  <label>Email â will be CC'd <span className="req">*</span></label>
+                  <label>Email - will be CC'd <span className="req">*</span></label>
                   <input type="email" inputMode="email" placeholder="email@example.com" value={otherEmail} onChange={e => setOtherEmail(e.target.value)} />
                   {otherEmail && (
                     <div className="cc-chips" style={{ marginTop: '6px' }}>
@@ -318,7 +318,7 @@ export default function TicketPage() {
                       {showTotal ? `${totalHours} hrs × $${parseFloat(hourlyRate).toFixed(2)}/hr` : 'Add hours to line items above'}
                     </div>
                   </div>
-                  <div className="price-val">{showTotal ? `$${totalAmount}` : 'â'}</div>
+                  <div className="price-val">{showTotal ? `$${totalAmount}` : '-'}</div>
                 </div>
               </div>
             )}
@@ -337,7 +337,7 @@ export default function TicketPage() {
           </button>
           <p className="dest-note">Sends to: jfishback@simonexpress.com Â· CC: person who completed work</p>
           {errors.length > 0 && (
-            <div className="err-box">{errors.map((e, i) => <div key={i}>â  {e}</div>)}</div>
+            <div className="err-box">{errors.map((e, i) => <div key={i}>! {e}</div>)}</div>
           )}
           {success && (
             <div className="ok-box">Work order submitted! The team has been notified and a PDF invoice has been emailed.</div>
