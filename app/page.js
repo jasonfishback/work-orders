@@ -7,6 +7,7 @@ const CC_MAP = {
   jordan: ['jordan@simonexpress.com'],
   split:  ['jsimon@simonexpress.com', 'jordan@simonexpress.com'],
   luis:   [],
+  rusty:  ['rfullmer@simonexpress.com'],
   other:  [],
 }
 
@@ -15,6 +16,7 @@ const NAME_MAP = {
   jordan: 'Jordan Simon',
   split:  'Jaden Simon / Jordan Simon Split',
   luis:   'Luis',
+  rusty:  'Rusty Fullmer',
   other:  'Other',
 }
 
@@ -170,6 +172,7 @@ export default function TicketPage() {
                 <option value="jordan">Jordan Simon</option>
                 <option value="split">Jaden Simon / Jordan Simon Split</option>
                 <option value="luis">Luis</option>
+                <option value="rusty">Rusty Fullmer</option>
                 <option value="other">Other</option>
               </select>
             </div>
