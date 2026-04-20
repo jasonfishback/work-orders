@@ -229,7 +229,7 @@ export default function TicketPage() {
           <div className="card">
             <div className="line-header">
               <span className="sec-lbl" style={{ margin: 0 }}>Line Items <span className="req">*</span></span>
-              <span className="col-hint">Description / Hours</span>
+              <span className="col-hint">Description · Hrs · Rate ($)</span>
             </div>
             <div className="line-items">
               {lineItems.map(item => (
