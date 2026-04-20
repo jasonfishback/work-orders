@@ -30,7 +30,7 @@ export default function TicketPage() {
   const [otherEmail,   setOtherEmail]   = useState('')
   const [unitNumber,   setUnitNumber]   = useState('')
   const [dateCompleted,setDateCompleted]= useState(today())
-  const [lineItems,    setLineItems]    = useState([{ id: 1, description: '', hours: '' }])
+  const [lineItems,    setLineItems]    = useState([{ id: 1, description: '', hours: '', rate: '' }])
   const [notes,        setNotes]        = useState('')
   const [rateType,     setRateType]     = useState('flat')
   const [flatAmount,   setFlatAmount]   = useState('')
@@ -48,13 +48,16 @@ export default function TicketPage() {
     : (CC_MAP[personKey] || [])
 
   const totalHours = lineItems.reduce((s, i) => s + (parseFloat(i.hours) || 0), 0)
+  const lineItemRatesSum = lineItems.reduce((s, i) => s + (parseFloat(i.rate) || 0), 0)
+  const anyLineItemRates = lineItems.some(i => parseFloat(i.rate) > 0)
+  const effectiveFlatAmount = anyLineItemRates ? lineItemRatesSum.toFixed(2) : flatAmount
   const totalAmount = rateType === 'hourly'
     ? (totalHours * (parseFloat(hourlyRate) || 0)).toFixed(2)
-    : parseFloat(flatAmount || 0).toFixed(2)
+    : parseFloat(effectiveFlatAmount || 0).toFixed(2)
   const showTotal = parseFloat(totalAmount) > 0
 
   function addLine() {
-    setLineItems(prev => [...prev, { id: nextId.current++, description: '', hours: '' }])
+    setLineItems(prev => [...prev, { id: nextId.current++, description: '', hours: '', rate: '' }])
   }
   function removeLine(id) {
     setLineItems(prev => prev.length > 1 ? prev.filter(i => i.id !== id) : prev)
@@ -103,7 +106,7 @@ export default function TicketPage() {
     if (personKey === 'other' && otherEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(otherEmail)) errs.push('Please enter a valid email address.')
     if (!dateCompleted) errs.push('Date Completed is required.')
     if (!lineItems.some(i => i.description.trim())) errs.push('At least one work description is required.')
-    if (rateType === 'flat' && !(parseFloat(flatAmount) > 0)) errs.push('Please enter a flat rate amount.')
+    if (rateType === 'flat' && !(parseFloat(effectiveFlatAmount) > 0)) errs.push('Please enter a flat rate amount.')
     return errs
   }
 
@@ -122,7 +125,7 @@ export default function TicketPage() {
           unitNumber: unitNumber.trim(), dateCompleted,
           lineItems, notes,
           rateType,
-          flatAmount: rateType === 'flat' ? flatAmount : null,
+          flatAmount: rateType === 'flat' ? effectiveFlatAmount : null,
           hourlyRate: rateType === 'hourly' ? hourlyRate : null,
           photos,
         }),
@@ -131,7 +134,7 @@ export default function TicketPage() {
       if (!res.ok) throw new Error(data.error || 'Server error')
       setSuccess(true)
       setUnitNumber(''); setPersonKey(''); setOtherName(''); setOtherEmail('')
-      setDateCompleted(today()); setLineItems([{ id: nextId.current++, description: '', hours: '' }])
+      setDateCompleted(today()); setLineItems([{ id: nextId.current++, description: '', hours: '', rate: '' }])
       setRateType('flat'); setFlatAmount(''); setHourlyRate(''); setPhotos([]); setNotes('')
     } catch (err) {
       setErrors([err.message || 'Something went wrong.'])
@@ -238,6 +241,11 @@ export default function TicketPage() {
                     <input className="li-hrs" type="number" inputMode="decimal" placeholder="0" min="0" step="0.25"
                       value={item.hours} onChange={e => updateLine(item.id, 'hours', e.target.value)} />
                   </div>
+                  <div className="li-rate-wrap">
+                    <span className="li-rate-sym">$</span>
+                    <input className="li-rate" type="number" inputMode="decimal" placeholder="0.00" min="0" step="0.01"
+                      value={item.rate} onChange={e => updateLine(item.id, 'rate', e.target.value)} />
+                  </div>
                   <button className="li-rm" onClick={() => removeLine(item.id)} title="Remove">×</button>
                 </div>
               ))}
@@ -246,10 +254,10 @@ export default function TicketPage() {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               Add Line Item
             </button>
-            {totalHours > 0 && (
+            {(totalHours > 0 || anyLineItemRates) && (
               <div className="hours-total-bar">
-                <span className="hours-total-lbl">Total Hours</span>
-                <span className="hours-total-val">{totalHours % 1 === 0 ? totalHours.toFixed(0) : totalHours.toFixed(2)}</span>
+                {totalHours > 0 && (<><span className="hours-total-lbl">Total Hours</span><span className="hours-total-val">{totalHours % 1 === 0 ? totalHours.toFixed(0) : totalHours.toFixed(2)}</span></>)}
+                {anyLineItemRates && (<><span className="hours-total-lbl" style={{ marginLeft: totalHours > 0 ? '16px' : 0 }}>Line Items Total</span><span className="hours-total-val">${lineItemRatesSum.toFixed(2)}</span></>)}
               </div>
             )}
           </div>
@@ -310,17 +318,20 @@ export default function TicketPage() {
             {rateType === 'flat' && (
               <div className="rate-inner">
                 <div className="field">
-                  <label>Flat Rate Amount</label>
+                  <label>Flat Rate Amount{anyLineItemRates && <span className="rate-auto-lbl"> - auto-calculated from line items</span>}</label>
                   <div className="currency-wrap">
                     <span className="currency-sym">$</span>
                     <input type="number" inputMode="decimal" placeholder="0.00" min="0" step="0.01"
-                      value={flatAmount} onChange={e => setFlatAmount(e.target.value)} />
+                      value={anyLineItemRates ? lineItemRatesSum.toFixed(2) : flatAmount}
+                      onChange={e => { if (!anyLineItemRates) setFlatAmount(e.target.value) }}
+                      readOnly={anyLineItemRates}
+                      style={anyLineItemRates ? { background: '#f0f0f0', color: '#555', cursor: 'not-allowed' } : {}} />
                   </div>
                 </div>
                 {parseFloat(flatAmount) > 0 && (
                   <div className="price-bar">
                     <div className="price-lbl">Flat Rate Total</div>
-                    <div className="price-val">${parseFloat(flatAmount).toFixed(2)}</div>
+                    <div className="price-val">${parseFloat(effectiveFlatAmount).toFixed(2)}</div>
                   </div>
                 )}
               </div>
