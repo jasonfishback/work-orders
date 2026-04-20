@@ -359,7 +359,7 @@ export default function TicketPage() {
               </>
             )}
           </button>
-          <p className="dest-note">Sends to: jfishback@simonexpress.com / CC: person who completed work</p>
+          <p className="dest-note">Sends to: jfishback, csimon, tsimon @simonexpress.com · CC: person who completed work</p>
           {errors.length > 0 && (
             <div className="err-box">{errors.map((e, i) => <div key={i}>! {e}</div>)}</div>
           )}
