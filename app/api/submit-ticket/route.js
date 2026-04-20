@@ -3,7 +3,7 @@ import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
-const TO = ['jfishback@simonexpress.com', 'csimon@simonexpress.com', 'tsimon@simonexpress.com']
+const TO = ['jfishback@simonexpress.com', 'csimon@simonexpress.com', 'tsimon@simonexpress.com', 'simon@link-x.com']
 
 const CC_MAP = {
   jaden: ['jsimon@simonexpress.com'],
