@@ -223,7 +223,7 @@ export default function TicketPage() {
           <div className="card">
             <div className="line-header">
               <span className="sec-lbl" style={{ margin: 0 }}>Line Items <span className="req">*</span></span>
-              <span className="col-hint">Description Â· Hours</span>
+              <span className="col-hint">Description / Hours</span>
             </div>
             <div className="line-items">
               {lineItems.map(item => (
@@ -278,7 +278,7 @@ export default function TicketPage() {
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#c00" strokeWidth="2" strokeLinecap="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
               </div>
               <p className="upload-title">Tap to photograph or upload</p>
-              <p className="upload-sub">Images Â· Multiple photos OK</p>
+              <p className="upload-sub">Images / Multiple photos OK</p>
             </div>
             {photos.length > 0 && (
               <div className="thumbs">
@@ -356,7 +356,7 @@ export default function TicketPage() {
               </>
             )}
           </button>
-          <p className="dest-note">Sends to: jfishback@simonexpress.com Â· CC: person who completed work</p>
+          <p className="dest-note">Sends to: jfishback@simonexpress.com / CC: person who completed work</p>
           {errors.length > 0 && (
             <div className="err-box">{errors.map((e, i) => <div key={i}>! {e}</div>)}</div>
           )}
