@@ -102,6 +102,10 @@ async function buildInvoicePdf(data, invoiceNum) {
   drawRect(p1, ML, y - 26, CW, 26, NAVY, undefined)
   text(p1, 'Unit: ' + unitNumber, ML + 10, y - 17, 9, bold, WHITE)
   text(p1, 'Date Completed: ' + dateCompleted, ML + 130, y - 17, 9, bold, WHITE)
+  if (personKey === 'split') {
+    const spLabel = 'SPLIT PAY INVOICE'
+    text(p1, spLabel, W - MR - bold.widthOfTextAtSize(spLabel, 8) - 10, y - 17, 8, bold, rgb(0.4, 0.7, 1.0))
+  }
   y -= 26
 
   const COL_DESC = ML, COL_HRS = W - MR - 180, COL_RATE = W - MR - 100, COL_AMT = W - MR - 10, RROW = 22
@@ -154,66 +158,45 @@ async function buildInvoicePdf(data, invoiceNum) {
 
   // ── SPLIT PAY BLOCK (Jaden / Jordan split) ─────────────────────────────────
   if (personKey === 'split') {
-    const splitAmt = (parseFloat(rateType === 'flat' ? (totalAmount || flatAmount || 0) : (items.reduce((s,i)=>s+(parseFloat(i.hours)||0),0)*(parseFloat(hourlyRate)||0))) / 2)
-    const splitStr = ' {
-    const totalHrs = items.reduce((s, i) => s + (parseFloat(i.hours) || 0), 0)
-    const summaryStr = 'Total Hours: ' + totalHrs.toFixed(2) + '  x  $' + parseFloat(hourlyRate || 0).toFixed(2) + '/hr  =  $' + grandTotal.toFixed(2)
-    drawRect(p1, ML, y - 22, CW, 22, LGRAY, BORDER, 0.5)
-    text(p1, summaryStr, ML + 10, y - 14, 9, regular, DGRAY)
-    y -= 22
-  }
+    const totalDue = parseFloat(rateType === 'flat'
+      ? (data.flatAmount || data.totalAmount || 0)
+      : (items.reduce((s,i)=>s+(parseFloat(i.hours)||0),0) * (parseFloat(hourlyRate)||0)))
+    const splitAmt = totalDue / 2
+    const splitStr = '$' + splitAmt.toFixed(2)
 
-  if (data.notes && data.notes.trim()) {
-    y -= 14
-    drawRect(p1, ML, y - 18, CW, 18, NAVY, undefined)
-    text(p1, 'NOTES', ML + 10, y - 12, 8, bold, WHITE)
-    y -= 18
-    const noteLines = wrapText(data.notes.trim(), regular, 9.5, CW - 20)
-    const notesBoxH = Math.max(36, noteLines.length * 14 + 16)
-    drawRect(p1, ML, y - notesBoxH, CW, notesBoxH, LGRAY, BORDER, 0.5)
-    noteLines.forEach(function(l, idx) {
-      const ly = y - 12 - idx * 14
-      if (ly > y - notesBoxH + 4) text(p1, l, ML + 10, ly, 9.5, regular, DGRAY)
-    })
-    y -= notesBoxH
-  }
+    y -= 10
 
-  if (photos && photos.length > 0) {
-    y -= 14
-    text(p1, photos.length + ' photo' + (photos.length > 1 ? 's' : '') + ' attached - see following page' + (photos.length > 1 ? 's' : ''), ML, y, 8, regular, MGRAY)
-  }
+    // Dark header bar
+    drawRect(p1, ML, y - 26, CW, 26, NAVY, undefined)
+    text(p1, 'PAYMENT BREAKDOWN  -  50/50 SPLIT', ML + 10, y - 17, 9, bold, WHITE)
+    const splitLabelW = bold.widthOfTextAtSize('SPLIT PAY INVOICE', 8)
+    text(p1, 'SPLIT PAY INVOICE', W - MR - splitLabelW - 10, y - 17, 8, bold, rgb(0.4, 0.7, 1.0))
+    y -= 26
 
-  drawLine(p1, ML, 44, W - MR, 44, BORDER, 0.5)
-  text(p1, 'Simon Express Work Order  |  ' + invoiceNum, ML, 30, 7.5, regular, MGRAY)
-  text(p1, 'Page 1 of ' + ((photos ? photos.length : 0) + 1), W - MR - 60, 30, 7.5, regular, MGRAY)
+    // Two pay boxes side by side
+    const bw = (CW - 10) / 2
 
-  if (photos && photos.length > 0) {
-    for (let pi = 0; pi < photos.length; pi++) {
-      const photo = photos[pi]
-      const pp = pdfDoc.addPage([W, H])
-      drawRect(pp, 0, H - 44, W, 44, NAVY, undefined)
-      text(pp, 'WORK ORDER INVOICE - PHOTO DOCUMENTATION', ML, H - 26, 10, bold, WHITE)
-      text(pp, invoiceNum + '  |  Unit: ' + unitNumber + '  |  ' + personName, ML, H - 38, 7.5, regular, rgb(0.6, 0.7, 0.8))
-      text(pp, 'Photo ' + (pi + 1) + ' of ' + photos.length + ': ' + (photo.name || ''), ML, H - 58, 8, bold, NAVY)
-      drawLine(pp, ML, H - 64, W - MR, H - 64, BORDER, 0.5)
-      try {
-        const base64 = photo.dataUrl.split(',')[1]
-        const bytes = Buffer.from(base64, 'base64')
-        const isPng = photo.dataUrl.startsWith('data:image/png')
-        const img = isPng ? await pdfDoc.embedPng(bytes) : await pdfDoc.embedJpg(bytes)
-        const availW = W - ML - MR, availH = H - 110
-        const scale = Math.min(availW / img.width, availH / img.height, 1)
-        pp.drawImage(img, { x: ML + (availW - img.width * scale) / 2, y: H - 72 - img.height * scale, width: img.width * scale, height: img.height * scale })
-      } catch (_) {
-        text(pp, '(Image could not be rendered)', ML, H - 200, 10, regular, MGRAY)
-      }
-      drawLine(pp, ML, 44, W - MR, 44, BORDER, 0.5)
-      text(pp, 'Simon Express Work Order  |  ' + invoiceNum, ML, 30, 7.5, regular, MGRAY)
-      text(pp, 'Page ' + (pi + 2) + ' of ' + (photos.length + 1), W - MR - 60, 30, 7.5, regular, MGRAY)
-    }
+    // Jaden box - left
+    drawRect(p1, ML, y - 80, bw, 80, rgb(0.97, 0.97, 1.0), BORDER, 0.75)
+    drawRect(p1, ML, y - 22, bw, 22, rgb(0.2, 0.2, 0.35), undefined)
+    text(p1, 'PAY TO', ML + 8, y - 14, 7, bold, rgb(0.6, 0.7, 0.9))
+    text(p1, 'Jaden Simon', ML + 8, y - 38, 11, bold, NAVY)
+    text(p1, '50% of Total Invoice', ML + 8, y - 52, 8, regular, DGRAY)
+    const jsw = bold.widthOfTextAtSize(splitStr, 18)
+    text(p1, splitStr, ML + bw - jsw - 8, y - 68, 18, bold, RED)
+
+    // Jordan box - right
+    const rx2 = ML + bw + 10
+    drawRect(p1, rx2, y - 80, bw, 80, rgb(0.97, 0.97, 1.0), BORDER, 0.75)
+    drawRect(p1, rx2, y - 22, bw, 22, rgb(0.2, 0.2, 0.35), undefined)
+    text(p1, 'PAY TO', rx2 + 8, y - 14, 7, bold, rgb(0.6, 0.7, 0.9))
+    text(p1, 'Jordan Simon', rx2 + 8, y - 38, 11, bold, NAVY)
+    text(p1, '50% of Total Invoice', rx2 + 8, y - 52, 8, regular, DGRAY)
+    const jrw = bold.widthOfTextAtSize(splitStr, 18)
+    text(p1, splitStr, rx2 + bw - jrw - 8, y - 68, 18, bold, RED)
+
+    y -= 90
   }
-  return Buffer.from(await pdfDoc.save())
-}
 
 export async function POST(request) {
   try {
@@ -259,7 +242,8 @@ export async function POST(request) {
       return `<tr style="background:${idx % 2 === 0 ? '#fff' : '#f9f9f9'}"><td style="padding:8px 12px;font-size:13px;color:#999;text-align:center;width:28px;border-bottom:1px solid #f0f0f0;">${idx + 1}</td><td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #f0f0f0;">${item.description || '-'}</td><td style="padding:8px 12px;font-size:13px;text-align:center;border-bottom:1px solid #f0f0f0;">${rateType === 'hourly' && hrs > 0 ? hrs.toFixed(2) : '-'}</td><td style="padding:8px 12px;font-size:13px;text-align:right;border-bottom:1px solid #f0f0f0;font-weight:600;">${amt > 0 ? '$' + amt.toFixed(2) : '-'}</td></tr>`
     }).join('')
 
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/></head><body style="margin:0;padding:0;background:#f0f0f0;font-family:Arial,sans-serif;"><div style="max-width:600px;margin:28px auto;background:#fff;border-radius:8px;overflow:hidden;border:1px solid #ddd;"><div style="background:#111;"><div style="background:#CC0000;height:4px;"></div><div style="padding:16px 24px;"><span style="font-size:18px;font-weight:700;color:#fff;">Simon Express</span><span style="display:block;font-size:10px;color:#9aafca;letter-spacing:2px;text-transform:uppercase;margin-top:2px;">Work Order Invoice -  ${invoiceNum}</span></div></div><div style="padding:24px;"><table style="width:100%;margin-bottom:20px;border-collapse:collapse;"><tr><td style="width:48%;vertical-align:top;background:#f5f5f5;border:1px solid #ddd;border-radius:6px;padding:12px;"><div style="font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Pay To</div><div style="font-size:15px;font-weight:700;color:#1a1a2e;">${personName}</div>${rateType === 'hourly' ? `<div style="font-size:12px;color:#666;margin-top:4px;">Rate: $${parseFloat(hourlyRate || 0).toFixed(2)}/hr</div>` : '<div style="font-size:12px;color:#666;margin-top:4px;">Flat Rate</div>'}</td><td style="width:4%;"></td><td style="width:48%;vertical-align:top;border:1px solid #ddd;border-radius:6px;padding:12px;"><div style="font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Invoice To</div><div style="font-size:15px;font-weight:700;color:#1a1a2e;">Simon Express</div><div style="font-size:12px;color:#666;margin-top:2px;">PO Box 1582<br>Riverton, UT 84065<br>801-260-7010</div></td></tr></table><div style="background:#111;color:#fff;border-radius:6px;padding:9px 14px;font-size:12px;margin-bottom:20px;display:flex;gap:24px;"><span><strong>Unit:</strong> ${unitNumber}</span><span><strong>Date Completed:</strong> ${dateCompleted}</span><span><strong>Rate Type:</strong> ${rateType === 'hourly' ? 'Hourly' : 'Flat Rate'}</span></div><div style="margin-bottom:20px;"><div style="font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Work Performed</div><table style="width:100%;border-collapse:collapse;border:1px solid #e0e0e0;border-radius:6px;overflow:hidden;"><thead><tr style="background:#f0f0f0;"><th style="padding:8px 12px;font-size:11px;text-align:left;color:#999;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #e0e0e0;">#</th><th style="padding:8px 12px;font-size:11px;text-align:left;color:#999;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #e0e0e0;">Description</th><th style="padding:8px 12px;font-size:11px;text-align:center;color:#999;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #e0e0e0;">Hrs</th><th style="padding:8px 12px;font-size:11px;text-align:right;color:#999;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #e0e0e0;">Amount</th></tr></thead><tbody>${itemRows}</tbody></table></div><div style="text-align:right;padding:14px 0;border-top:2px solid #f0f0f0;margin-bottom:${notes && notes.trim() ? '20px' : '0'};"><div style="font-size:11px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Total Due</div><div style="font-size:30px;font-weight:700;color:#CC0000;line-height:1;">$${totalAmount}</div></div>${personKey === 'split' ? `<div style="margin:16px 0;background:#f5f5f5;border:1px solid #ddd;border-radius:6px;overflow:hidden;"><div style="background:#111;color:#fff;padding:8px 14px;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;">Payment Breakdown &mdash; 50/50 Split</div><table style="width:100%;border-collapse:collapse;"><tr><td style="width:50%;padding:12px;border-right:1px solid #ddd;vertical-align:top;"><div style="font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Pay To</div><div style="font-size:15px;font-weight:700;color:#1a1a2e;margin-bottom:4px;">Jaden Simon</div><div style="font-size:11px;color:#666;margin-bottom:8px;">50% of total</div><div style="font-size:22px;font-weight:800;color:#CC0000;">${(parseFloat(totalAmount)/2).toFixed(2)}</div></td><td style="width:50%;padding:12px;vertical-align:top;"><div style="font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Pay To</div><div style="font-size:15px;font-weight:700;color:#1a1a2e;margin-bottom:4px;">Jordan Simon</div><div style="font-size:11px;color:#666;margin-bottom:8px;">50% of total</div><div style="font-size:22px;font-weight:800;color:#CC0000;">${(parseFloat(totalAmount)/2).toFixed(2)}</div></td></tr></table></div>` : ''}${notes && notes.trim() ? `<div style="margin-bottom:4px;"><div style="font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Notes</div><div style="background:#f8f8f8;border-left:3px solid #ddd;padding:10px 14px;font-size:13px;line-height:1.6;color:#444;white-space:pre-wrap;">${notes.trim()}</div></div>` : ''}${photos && photos.length > 0 ? `<p style="font-size:12px;color:#aaa;margin-top:16px;margin-bottom:0;">${photos.length} photo${photos.length > 1 ? 's' : ''} attached - see PDF.</p>` : ''}</div><div style="padding:14px 24px;border-top:1px solid #f0f0f0;text-align:center;"><p style="font-size:11px;color:#aaa;margin:0;">Simon Express Work Order System . ${invoiceNum} </p></div></div></body></html>`
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/></head><body style="margin:0;padding:0;background:#f0f0f0;font-family:Arial,sans-serif;"><div style="max-width:600px;margin:28px auto;background:#fff;border-radius:8px;overflow:hidden;border:1px solid #ddd;"><div style="background:#111;"><div style="background:#CC0000;height:4px;"></div><div style="padding:16px 24px;"><span style="font-size:18px;font-weight:700;color:#fff;">Simon Express</span><span style="display:block;font-size:10px;color:#9aafca;letter-spacing:2px;text-transform:uppercase;margin-top:2px;">Work Order Invoice -  ${invoiceNum}</span></div></div><div style="padding:24px;"><table style="width:100%;margin-bottom:20px;border-collapse:collapse;"><tr><td style="width:48%;vertical-align:top;background:#f5f5f5;border:1px solid #ddd;border-radius:6px;padding:12px;"><div style="font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Pay To</div><div style="font-size:15px;font-weight:700;color:#1a1a2e;">${personName}</div>${rateType === 'hourly' ? `<div style="font-size:12px;color:#666;margin-top:4px;">Rate: $${parseFloat(hourlyRate || 0).toFixed(2)}/hr</div>` : '<div style="font-size:12px;color:#666;margin-top:4px;">Flat Rate</div>'}</td><td style="width:4%;"></td><td style="width:48%;vertical-align:top;border:1px solid #ddd;border-radius:6px;padding:12px;"><div style="font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Invoice To</div><div style="font-size:15px;font-weight:700;color:#1a1a2e;">Simon Express</div><div style="font-size:12px;color:#666;margin-top:2px;">PO Box 1582<br>Riverton, UT 84065<br>801-260-7010</div></td></tr></table><div style="background:#111;color:#fff;border-radius:6px;padding:9px 14px;font-size:12px;margin-bottom:20px;display:flex;gap:24px;"><span><strong>Unit:</strong> ${unitNumber}</span><span><strong>Date Completed:</strong> ${dateCompleted}</span><span><strong>Rate Type:</strong> ${rateType === 'hourly' ? 'Hourly' : 'Flat Rate'}</span></div><div style="margin-bottom:20px;"><div style="font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Work Performed</div><table style="width:100%;border-collapse:collapse;border:1px solid #e0e0e0;border-radius:6px;overflow:hidden;"><thead><tr style="background:#f0f0f0;"><th style="padding:8px 12px;font-size:11px;text-align:left;color:#999;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #e0e0e0;">#</th><th style="padding:8px 12px;font-size:11px;text-align:left;color:#999;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #e0e0e0;">Description</th><th style="padding:8px 12px;font-size:11px;text-align:center;color:#999;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #e0e0e0;">Hrs</th><th style="padding:8px 12px;font-size:11px;text-align:right;color:#999;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #e0e0e0;">Amount</th></tr></thead><tbody>${itemRows}</tbody></table></div><div style="text-align:right;padding:14px 0;border-top:2px solid #f0f0f0;margin-bottom:${notes && notes.trim() ? '20px' : '0'};"><div style="font-size:11px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Total Due</div><div style="font-size:30px;font-weight:700;color:#CC0000;line-height:1;">$${totalAmount}</div></div>${personKey === 'split' ? `
+<div style="margin:20px 0;border-radius:8px;overflow:hidden;border:1px solid #ddd;"><div style="background:#1a1a2e;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;"><span style="color:#fff;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;">Payment Breakdown - 50/50 Split</span><span style="color:#66b3ff;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;">SPLIT PAY INVOICE</span></div><table style="width:100%;border-collapse:collapse;"><tr><td style="width:50%;padding:16px;background:#f5f5ff;border-right:1px solid #ddd;vertical-align:top;"><div style="font-size:9px;font-weight:700;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Pay To</div><div style="font-size:16px;font-weight:700;color:#1a1a2e;margin-bottom:4px;">Jaden Simon</div><div style="font-size:11px;color:#888;margin-bottom:12px;">50% of Total Invoice</div><div style="font-size:26px;font-weight:800;color:#CC0000;">\$\${(parseFloat(totalAmount)/2).toFixed(2)}</div></td><td style="width:50%;padding:16px;background:#f5f5ff;vertical-align:top;"><div style="font-size:9px;font-weight:700;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Pay To</div><div style="font-size:16px;font-weight:700;color:#1a1a2e;margin-bottom:4px;">Jordan Simon</div><div style="font-size:11px;color:#888;margin-bottom:12px;">50% of Total Invoice</div><div style="font-size:26px;font-weight:800;color:#CC0000;">\$\${(parseFloat(totalAmount)/2).toFixed(2)}</div></td></tr></table></div>` : ''}${notes && notes.trim() ? `<div style="margin-bottom:4px;"><div style="font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Notes</div><div style="background:#f8f8f8;border-left:3px solid #ddd;padding:10px 14px;font-size:13px;line-height:1.6;color:#444;white-space:pre-wrap;">${notes.trim()}</div></div>` : ''}${photos && photos.length > 0 ? `<p style="font-size:12px;color:#aaa;margin-top:16px;margin-bottom:0;">${photos.length} photo${photos.length > 1 ? 's' : ''} attached - see PDF.</p>` : ''}</div><div style="padding:14px 24px;border-top:1px solid #f0f0f0;text-align:center;"><p style="font-size:11px;color:#aaa;margin:0;">Simon Express Work Order System . ${invoiceNum} </p></div></div></body></html>`
 
     const { data, error } = await resend.emails.send({
       from: 'Simon Express Work Orders <tickets@simonexpress.com>',
