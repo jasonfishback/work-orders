@@ -214,7 +214,7 @@ export default function TicketPage() {
                     <input className="li-hrs" type="number" inputMode="decimal" placeholder="0" min="0" step="0.25"
                       value={item.hours} onChange={e => updateLine(item.id, 'hours', e.target.value)} />
                   </div>
-                  <button className="li-rm" onClick={() => removeLine(item.id)} title="Remove">Ã</button>
+                  <button className="li-rm" onClick={() => removeLine(item.id)} title="Remove">×</button>
                 </div>
               ))}
             </div>
@@ -264,7 +264,7 @@ export default function TicketPage() {
                 {photos.map((p, i) => (
                   <div key={i} className="thumb">
                     <img src={p.dataUrl} alt={p.name} />
-                    <button className="thumb-rm" onClick={() => setPhotos(ph => ph.filter((_, idx) => idx !== i))}>Ã</button>
+                    <button className="thumb-rm" onClick={() => setPhotos(ph => ph.filter((_, idx) => idx !== i))}>×</button>
                   </div>
                 ))}
               </div>
@@ -315,7 +315,7 @@ export default function TicketPage() {
                   <div>
                     <div className="price-lbl">Estimated Total</div>
                     <div className="price-note">
-                      {showTotal ? `${totalHours} hrs Ã $${parseFloat(hourlyRate).toFixed(2)}/hr` : 'Add hours to line items above'}
+                      {showTotal ? `${totalHours} hrs × $${parseFloat(hourlyRate).toFixed(2)}/hr` : 'Add hours to line items above'}
                     </div>
                   </div>
                   <div className="price-val">{showTotal ? `$${totalAmount}` : 'â'}</div>
