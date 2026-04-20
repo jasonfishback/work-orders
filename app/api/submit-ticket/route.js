@@ -360,6 +360,30 @@ export async function POST(request) {
       </table>
     </div>` : ''
 
+    // Outlook calendar links
+    var payDate = new Date()
+    payDate.setDate(payDate.getDate() + 7)
+    var pad = function(n) { return String(n).padStart(2,'0') }
+    var evtYear = payDate.getFullYear()
+    var evtMonth = pad(payDate.getMonth()+1)
+    var evtDay = pad(payDate.getDate())
+    var evtDateStr = '' + evtYear + evtMonth + evtDay
+    var calSubject = encodeURIComponent('PAY - Work Order ' + invoiceNum + ' - ' + personName)
+    var calBody = encodeURIComponent('Pay work order ' + invoiceNum + ' for ' + personName + '. Unit: ' + unitNumber + '. Date completed: ' + dateCompleted + '. Amount: $' + totalAmount)
+    var outlookUrl = 'https://outlook.live.com/calendar/0/deeplink/compose?subject=' + calSubject + '&body=' + calBody + '&startdt=' + evtYear + '-' + evtMonth + '-' + evtDay + '&enddt=' + evtYear + '-' + evtMonth + '-' + evtDay + '&allday=true&path=%2Fcalendar%2Faction%2Fcompose&rru=addevent'
+    var outlook365Url = 'https://outlook.office.com/calendar/0/deeplink/compose?subject=' + calSubject + '&body=' + calBody + '&startdt=' + evtYear + '-' + evtMonth + '-' + evtDay + '&enddt=' + evtYear + '-' + evtMonth + '-' + evtDay + '&allday=true&path=%2Fcalendar%2Faction%2Fcompose&rru=addevent'
+    var icsLines = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Simon Express//EN','BEGIN:VEVENT','DTSTART;VALUE=DATE:' + evtDateStr,'DTEND;VALUE=DATE:' + evtDateStr,'SUMMARY:PAY - Work Order ' + invoiceNum + ' - ' + personName,'DESCRIPTION:Amount $' + totalAmount + ' for ' + personName + ' - Unit ' + unitNumber,'END:VEVENT','END:VCALENDAR']
+    var icsDataUrl = 'data:text/calendar;charset=utf8,' + encodeURIComponent(icsLines.join('\r\n'))
+    var calDownloadName = 'WorkOrder-' + invoiceNum + '.ics'
+    var calendarHtml = '<div style="margin:20px 0;background:#f9f9f9;border:1px solid #e0e0e0;border-radius:8px;padding:16px;">'
+      + '<div style="font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Add Pay Reminder to Calendar</div>'
+      + '<p style="font-size:12px;color:#666;margin:0 0 12px 0;">Add a reminder to pay this work order (7 days from today).</p>'
+      + '<table style="border-collapse:collapse;"><tr>'
+      + '<td style="padding-right:8px;"><a href="' + outlookUrl + '" style="display:inline-block;background:#0078d4;color:#fff;text-decoration:none;font-size:12px;font-weight:700;padding:8px 14px;border-radius:5px;">+ Outlook Web</a></td>'
+      + '<td style="padding-right:8px;"><a href="' + outlook365Url + '" style="display:inline-block;background:#0078d4;color:#fff;text-decoration:none;font-size:12px;font-weight:700;padding:8px 14px;border-radius:5px;">+ Outlook 365</a></td>'
+      + '<td><a href="' + icsDataUrl + '" download="' + calDownloadName + '" style="display:inline-block;background:#111;color:#fff;text-decoration:none;font-size:12px;font-weight:700;padding:8px 14px;border-radius:5px;">+ Download .ics</a></td>'
+      + '</tr></table></div>'
+
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/></head>
 <body style="margin:0;padding:0;background:#f0f0f0;font-family:Arial,sans-serif;">
 <div style="max-width:600px;margin:28px auto;background:#fff;border-radius:8px;overflow:hidden;border:1px solid #ddd;">
@@ -409,6 +433,7 @@ export async function POST(request) {
       <div style="font-size:30px;font-weight:700;color:#CC0000;line-height:1;">$${totalAmount}</div>
     </div>
     ${splitPayHtml}
+    ${calendarHtml}
     ${notes && notes.trim() ? `<div style="margin-bottom:4px;"><div style="font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Notes</div><div style="background:#f8f8f8;border-left:3px solid #ddd;padding:10px 14px;border-radius:0 6px 6px 0;font-size:13px;line-height:1.6;color:#444;white-space:pre-wrap;">${notes.trim()}</div></div>` : ''}
     ${photos && photos.length > 0 ? `<p style="font-size:12px;color:#aaa;margin-top:16px;margin-bottom:0;">${photos.length} photo${photos.length > 1 ? 's' : ''} attached - see PDF.</p>` : ''}
   </div>
