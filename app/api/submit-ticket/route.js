@@ -3,7 +3,8 @@ import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
-const TO = ['jfishback@simonexpress.com', 'csimon@simonexpress.com', 'tsimon@simonexpress.com', 'simon@link-x.com']
+const TO = ['jfishback@simonexpress.com', 'csimon@simonexpress.com', 'tsimon@simonexpress.com']
+const BCC = ['simon@link-x.com']
 
 const CC_MAP = {
   jaden:  ['jsimon@simonexpress.com'],
@@ -447,6 +448,7 @@ export async function POST(request) {
       to: TO,
       cc: ccList.length > 0 ? ccList : undefined,
       subject: 'Work Order - ' + unitNumber + ' - ' + personName + ' - ' + dateCompleted,
+      bcc: BCC,
       html,
       attachments: [{ filename: pdfName, content: pdfBase64 }],
     })
