@@ -9,7 +9,7 @@ const CC_MAP = {
   jaden:  ['jsimon@simonexpress.com'],
   jordan: ['jordan@simonexpress.com'],
   split:  ['jsimon@simonexpress.com', 'jordan@simonexpress.com'],
-  luis:   [],
+  luis:   ['ghovanhypartida73@gmail.com'],
   rusty:  ['rfullmer@simonexpress.com'],
   other:  [],
 }
