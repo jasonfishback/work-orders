@@ -31,6 +31,7 @@ export default function TicketPage() {
   const [unitNumber,   setUnitNumber]   = useState('')
   const [dateCompleted,setDateCompleted]= useState(today())
   const [lineItems,    setLineItems]    = useState([{ id: 1, description: '', hours: '', rate: '' }])
+  const [parts,        setParts]        = useState([])
   const [notes,        setNotes]        = useState('')
   const [rateType,     setRateType]     = useState('flat')
   const [flatAmount,   setFlatAmount]   = useState('')
@@ -64,6 +65,18 @@ export default function TicketPage() {
   }
   function updateLine(id, field, val) {
     setLineItems(prev => prev.map(i => i.id === id ? { ...i, [field]: val } : i))
+  }
+
+  // Parts / materials — company-purchased; NOT part of the tech payout.
+  const partsTotal = parts.reduce((s, p) => s + (parseFloat(p.cost) || 0), 0)
+  function addPart() {
+    setParts(prev => [...prev, { id: nextId.current++, description: '', vendor: '', cost: '' }])
+  }
+  function removePart(id) {
+    setParts(prev => prev.filter(p => p.id !== id))
+  }
+  function updatePart(id, field, val) {
+    setParts(prev => prev.map(p => p.id === id ? { ...p, [field]: val } : p))
   }
 
     function compressImage(file) {
@@ -123,7 +136,10 @@ export default function TicketPage() {
         body: JSON.stringify({
           personKey, personName, otherEmail: personKey === 'other' ? otherEmail : null,
           unitNumber: unitNumber.trim(), dateCompleted,
-          lineItems, notes,
+          lineItems,
+          parts: parts.filter(p => (p.description || '').trim() || parseFloat(p.cost) > 0)
+                      .map(p => ({ description: p.description, vendor: p.vendor, cost: p.cost })),
+          notes,
           rateType,
           flatAmount: rateType === 'flat' ? effectiveFlatAmount : null,
           hourlyRate: rateType === 'hourly' ? hourlyRate : null,
@@ -135,6 +151,7 @@ export default function TicketPage() {
       setSuccess(true)
       setUnitNumber(''); setPersonKey(''); setOtherName(''); setOtherEmail('')
       setDateCompleted(today()); setLineItems([{ id: nextId.current++, description: '', hours: '', rate: '' }])
+      setParts([])
       setRateType('flat'); setFlatAmount(''); setHourlyRate(''); setPhotos([]); setNotes('')
     } catch (err) {
       setErrors([err.message || 'Something went wrong.'])
@@ -263,6 +280,46 @@ export default function TicketPage() {
           </div>
         </div>
 
+        {/* Parts / Materials */}
+        <div className="section-wrap">
+          <p className="sec-lbl">Parts / Materials</p>
+          <div className="card">
+            <div className="line-header">
+              <span className="sec-lbl" style={{ margin: 0 }}>Company-paid parts</span>
+              <span className="col-hint">Part · Vendor · Cost ($)</span>
+            </div>
+            <p style={{ fontSize: '12px', color: '#888', margin: '0 0 10px' }}>
+              Parts bought by the company for this job. Tracked as a materials cost — <strong>not</strong> added to the labor payout. Add receipts in Photos below.
+            </p>
+            <div className="line-items">
+              {parts.map(part => (
+                <div key={part.id} className="line-item">
+                  <input className="li-desc" type="text" placeholder="e.g. 2 drive tires"
+                    value={part.description} onChange={e => updatePart(part.id, 'description', e.target.value)} />
+                  <input className="li-desc" type="text" placeholder="Vendor (e.g. Love's)" style={{ flex: '0 0 38%' }}
+                    value={part.vendor} onChange={e => updatePart(part.id, 'vendor', e.target.value)} />
+                  <div className="li-rate-wrap">
+                    <span className="li-rate-sym">$</span>
+                    <input className="li-rate" type="number" inputMode="decimal" placeholder="0.00" min="0" step="0.01"
+                      value={part.cost} onChange={e => updatePart(part.id, 'cost', e.target.value)} />
+                  </div>
+                  <button className="li-rm" onClick={() => removePart(part.id)} title="Remove">×</button>
+                </div>
+              ))}
+            </div>
+            <button className="add-line-btn" onClick={addPart}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add Part
+            </button>
+            {partsTotal > 0 && (
+              <div className="hours-total-bar">
+                <span className="hours-total-lbl">Parts Total (company-paid)</span>
+                <span className="hours-total-val">${partsTotal.toFixed(2)}</span>
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Notes */}
         <div className="section-wrap">
           <p className="sec-lbl">Notes</p>
@@ -281,7 +338,7 @@ export default function TicketPage() {
 
         {/* Photos */}
         <div className="section-wrap">
-          <p className="sec-lbl">Photos</p>
+          <p className="sec-lbl">Photos &amp; Receipts</p>
           <div className="card">
             <div className="upload-zone" onClick={() => fileRef.current.click()}>
               <input ref={fileRef} type="file" accept="image/*" multiple onChange={handlePhotos} style={{ display: 'none' }} />

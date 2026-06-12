@@ -59,7 +59,7 @@ function fmtDate(d) {
 }
 
 async function buildInvoicePdf(data, invoiceNum) {
-  const { personKey, personName, unitNumber, lineItems, rateType, flatAmount, hourlyRate, totalAmount, photos } = data
+  const { personKey, personName, unitNumber, lineItems, rateType, flatAmount, hourlyRate, totalAmount, photos, parts } = data
   const dateCompleted = fmtDate(data.dateCompleted)
 
   const pdfDoc  = await PDFDocument.create()
@@ -214,6 +214,46 @@ async function buildInvoicePdf(data, invoiceNum) {
     y -= 90
   }
 
+  // Parts / Materials (company-paid) — separate from the labor payout above.
+  const partsArr = Array.isArray(parts) ? parts.filter(function (p) { return (p.description || '').trim() || parseFloat(p.cost) > 0 }) : []
+  if (partsArr.length > 0) {
+    const partsSum = partsArr.reduce(function (s, p) { return s + (parseFloat(p.cost) || 0) }, 0)
+    const PC_VEND = ML + CW * 0.5
+    y -= 16
+    drawRect(p1, ML, y - 22, CW, 22, NAVY, undefined)
+    text(p1, 'PARTS / MATERIALS  (COMPANY-PAID)', ML + 10, y - 15, 9, bold, WHITE)
+    const phLbl = 'NOT INCLUDED IN PAYOUT'
+    text(p1, phLbl, W - MR - bold.widthOfTextAtSize(phLbl, 7) - 10, y - 15, 7, bold, rgb(0.7, 0.8, 0.95))
+    y -= 22
+    drawRect(p1, ML, y - 18, CW, 18, LGRAY, BORDER, 0.5)
+    text(p1, 'PART', ML + 8, y - 12, 7.5, bold, MGRAY)
+    text(p1, 'VENDOR', PC_VEND, y - 12, 7.5, bold, MGRAY)
+    text(p1, 'COST', COL_AMT - bold.widthOfTextAtSize('COST', 7.5), y - 12, 7.5, bold, MGRAY)
+    y -= 18
+    partsArr.forEach(function (p, idx) {
+      if (y < 96) return
+      const c = parseFloat(p.cost) || 0
+      const cStr = '$' + c.toFixed(2)
+      if (idx % 2 === 1) drawRect(p1, ML, y - 16, CW, 16, rgb(0.97, 0.97, 0.97), undefined)
+      text(p1, String(p.description || '-').slice(0, 46), ML + 8, y - 11, 9, regular, BLACK)
+      text(p1, String(p.vendor || '-').slice(0, 26), PC_VEND, y - 11, 9, regular, DGRAY)
+      text(p1, cStr, COL_AMT - regular.widthOfTextAtSize(cStr, 9), y - 11, 9, regular, BLACK)
+      y -= 16
+    })
+    drawLine(p1, COL_RATE - 20, y, W - MR, y, BORDER, 0.5)
+    y -= 14
+    const psStr = '$' + partsSum.toFixed(2)
+    text(p1, 'PARTS SUBTOTAL', COL_RATE - 20, y, 8, bold, MGRAY)
+    text(p1, psStr, W - MR - regular.widthOfTextAtSize(psStr, 9), y, 9, bold, DGRAY)
+    y -= 20
+    const jobLabor = parseFloat(totalAmount || 0)
+    const jobTotal = jobLabor + partsSum
+    drawRect(p1, ML, y - 22, CW, 22, rgb(0.93, 0.95, 0.98), BORDER, 0.5)
+    const jtStr = 'Labor $' + jobLabor.toFixed(2) + '   +   Parts $' + partsSum.toFixed(2) + '   =   Total Job Cost $' + jobTotal.toFixed(2)
+    text(p1, jtStr, ML + 10, y - 15, 9, bold, NAVY)
+    y -= 22
+  }
+
   // Notes
   if (data.notes && data.notes.trim()) {
     y -= 14
@@ -275,6 +315,9 @@ export async function POST(request) {
   try {
     const body = await request.json()
     const { personKey, personName, otherEmail, unitNumber, lineItems, notes, rateType, flatAmount, hourlyRate, photos } = body
+    const partsList = (Array.isArray(body.parts) ? body.parts : [])
+      .filter(p => (p.description || '').trim() || parseFloat(p.cost) > 0)
+    const partsTotal = partsList.reduce((s, p) => s + (parseFloat(p.cost) || 0), 0)
     const dateCompleted = fmtDate(body.dateCompleted)
 
     const ccList = [...(CC_MAP[personKey] || [])]
@@ -335,6 +378,27 @@ export async function POST(request) {
         <td style="padding:8px 12px;font-size:13px;text-align:right;border-bottom:1px solid #f0f0f0;font-weight:600;">${amt > 0 ? '$' + amt.toFixed(2) : '-'}</td>
       </tr>`
     }).join('')
+
+    // Parts / materials email block (company-paid, separate from labor payout)
+    const partsHtml = partsList.length > 0 ? `
+    <div style="margin-bottom:20px;">
+      <div style="font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Parts / Materials <span style="color:#bbb;font-weight:600;">(company-paid — not in payout)</span></div>
+      <table style="width:100%;border-collapse:collapse;border:1px solid #e0e0e0;border-radius:6px;overflow:hidden;">
+        <thead><tr style="background:#f0f0f0;">
+          <th style="padding:8px 12px;font-size:11px;text-align:left;color:#999;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #e0e0e0;">Part</th>
+          <th style="padding:8px 12px;font-size:11px;text-align:left;color:#999;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #e0e0e0;">Vendor</th>
+          <th style="padding:8px 12px;font-size:11px;text-align:right;color:#999;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #e0e0e0;">Cost</th>
+        </tr></thead>
+        <tbody>${partsList.map((p, idx) => `<tr style="background:${idx % 2 === 0 ? '#fff' : '#f9f9f9'}">
+          <td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #f0f0f0;">${p.description || '-'}</td>
+          <td style="padding:8px 12px;font-size:13px;color:#555;border-bottom:1px solid #f0f0f0;">${p.vendor || '-'}</td>
+          <td style="padding:8px 12px;font-size:13px;text-align:right;font-weight:600;border-bottom:1px solid #f0f0f0;">$${(parseFloat(p.cost) || 0).toFixed(2)}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+      <div style="text-align:right;padding:8px 12px;font-size:13px;color:#444;">
+        Parts subtotal: <strong>$${partsTotal.toFixed(2)}</strong> &nbsp;·&nbsp; Total job cost (labor + parts): <strong>$${(parseFloat(totalAmount) + partsTotal).toFixed(2)}</strong>
+      </div>
+    </div>` : ''
 
     // Split pay email block
     const splitPayHtml = personKey === 'split' ? `
@@ -432,7 +496,9 @@ export async function POST(request) {
     <div style="text-align:right;padding:14px 0;border-top:2px solid #f0f0f0;margin-bottom:${notes && notes.trim() ? '20px' : '0'};">
       <div style="font-size:11px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Total Due</div>
       <div style="font-size:30px;font-weight:700;color:#CC0000;line-height:1;">$${totalAmount}</div>
+      ${partsList.length > 0 ? `<div style="font-size:11px;color:#999;margin-top:4px;">labor only · parts billed to company separately</div>` : ''}
     </div>
+    ${partsHtml}
     ${splitPayHtml}
     ${calendarHtml}
     ${notes && notes.trim() ? `<div style="margin-bottom:4px;"><div style="font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Notes</div><div style="background:#f8f8f8;border-left:3px solid #ddd;padding:10px 14px;border-radius:0 6px 6px 0;font-size:13px;line-height:1.6;color:#444;white-space:pre-wrap;">${notes.trim()}</div></div>` : ''}
@@ -473,7 +539,8 @@ export async function POST(request) {
             personName,
             dateCompleted: body.dateCompleted, // raw YYYY-MM-DD
             rateType,
-            totalAmount,
+            totalAmount, // labor (tech payout)
+            parts: partsList.map(p => ({ description: p.description, vendor: p.vendor, cost: p.cost })),
             lineItems,
             notes,
             pdfBase64,
