@@ -454,6 +454,39 @@ export async function POST(request) {
     })
 
     if (error) return Response.json({ error: error.message }, { status: 500 })
+
+    // Sync the work order into the kpi maintenance system (kpi.simonexpress.com).
+    // Best-effort: a failure here must never break the invoice email above.
+    try {
+      const syncUrl = process.env.KPI_SYNC_URL
+      const syncSecret = process.env.KPI_SYNC_SECRET
+      if (syncUrl && syncSecret) {
+        const ctrl = new AbortController()
+        const t = setTimeout(() => ctrl.abort(), 8000)
+        await fetch(syncUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-wo-secret': syncSecret },
+          body: JSON.stringify({
+            invoiceNum,
+            unitNumber,
+            personKey,
+            personName,
+            dateCompleted: body.dateCompleted, // raw YYYY-MM-DD
+            rateType,
+            totalAmount,
+            lineItems,
+            notes,
+            pdfBase64,
+            pdfName,
+          }),
+          signal: ctrl.signal,
+        }).catch((e) => console.error('kpi sync failed:', e && e.message ? e.message : e))
+        clearTimeout(t)
+      }
+    } catch (e) {
+      console.error('kpi sync error:', e && e.message ? e.message : e)
+    }
+
     return Response.json({ success: true, id: data.id })
   } catch (err) {
     console.error(err)
