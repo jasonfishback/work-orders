@@ -206,12 +206,12 @@ function CheckInForm({ user, onLogout }) {
     })
   }
 
-  function onItemPhotos(id, e) {
+  function onItemPhotos(id, e, pos) {
     const files = Array.from(e.target.files)
     if (files.some(f => f.type.startsWith('video/'))) onVideos({ target: { files: files.filter(f => f.type.startsWith('video/')), value: '' } }, id)
     files.forEach(function (file) {
       if (!file.type.startsWith('image/')) return
-      compressImage(file).then(function (ph) { setItems(prev => prev.map(i => i.id === id ? { ...i, photos: [...i.photos, ph] } : i)) })
+      compressImage(file).then(function (ph) { setItems(prev => prev.map(i => i.id === id ? { ...i, photos: [...i.photos, pos ? { ...ph, pos } : ph] } : i)) })
     })
     e.target.value = ''
   }
@@ -441,9 +441,25 @@ function CheckInForm({ user, onLogout }) {
                     <div className="pos-notes">
                       <div className="pos-lbl" style={{ marginTop: 10 }}>Notes per tire</div>
                       {[...STEER_POS, ...DUAL_POS].filter(p => it.positions.includes(p)).map(p => (
-                        <div key={p} className="pos-note-row">
-                          <span className="pos-note-tag">{p}</span>
-                          <input className="pos-note-in" placeholder={`What's wrong with ${p}?`} value={(it.positionNotes || {})[p] || ''} onChange={e => setPosNote(it.id, p, e.target.value)} />
+                        <div key={p} className="pos-note-block">
+                          <div className="pos-note-row">
+                            <span className="pos-note-tag">{p}</span>
+                            <input className="pos-note-in" placeholder={`What's wrong with ${p}?`} value={(it.positionNotes || {})[p] || ''} onChange={e => setPosNote(it.id, p, e.target.value)} />
+                            <input ref={el => { fileRefs.current['tire' + it.id + p] = el }} type="file" accept="image/*" capture="environment" onChange={e => onItemPhotos(it.id, e, p)} style={{ display: 'none' }} />
+                            <button className="pos-cam" onClick={() => pick('tire' + it.id + p)} title={`Photo of ${p}`}>
+                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                            </button>
+                          </div>
+                          {it.photos.some(ph => ph.pos === p) && (
+                            <div className="thumbs" style={{ marginTop: 6 }}>
+                              {it.photos.map((ph, idx) => ph.pos === p && (
+                                <div key={idx} className="thumb">
+                                  <img src={ph.dataUrl} alt={ph.name} />
+                                  <button className="thumb-rm" onClick={() => upd(it.id, { photos: it.photos.filter((_, j) => j !== idx) })}>×</button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -482,9 +498,9 @@ function CheckInForm({ user, onLogout }) {
                   ))}
                 </div>
               )}
-              {it.photos.length > 0 && (
+              {it.photos.some(p => !p.pos) && (
                 <div className="thumbs">
-                  {it.photos.map((p, i) => (
+                  {it.photos.map((p, i) => !p.pos && (
                     <div key={i} className="thumb">
                       <img src={p.dataUrl} alt={p.name} />
                       <button className="thumb-rm" onClick={() => upd(it.id, { photos: it.photos.filter((_, idx) => idx !== i) })}>×</button>

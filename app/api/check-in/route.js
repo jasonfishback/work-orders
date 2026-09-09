@@ -127,10 +127,11 @@ async function buildPdf(data) {
           const b64 = String(p.dataUrl || '').split(',')[1]
           if (b64) {
             const img = await doc.embedJpg(Uint8Array.from(Buffer.from(b64, 'base64'))) // fresh copy: pooled Buffers give pdf-lib a wrong byte offset ("SOI not found")
-            const s = Math.min(boxW / img.width, boxH / img.height)
+            const s = Math.min(boxW / img.width, (boxH - 12) / img.height)
             const w = img.width * s, h = img.height * s
             const x = ML + col * (boxW + 8) + (boxW - w) / 2
-            page.drawImage(img, { x, y: y + (boxH - h) / 2, width: w, height: h })
+            page.drawImage(img, { x, y: y + (boxH - 12 - h) / 2, width: w, height: h })
+            if (p.pos) text(String(p.pos), ML + col * (boxW + 8) + 2, y + boxH - 9, 8, bold, NAVY)
           }
         } catch (e) { console.error('check-in pdf: item photo skipped:', e && e.message ? e.message : e) }
         col = (col + 1) % 3

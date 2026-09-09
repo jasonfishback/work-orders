@@ -190,3 +190,6 @@ body{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
 .pos-note-tag{flex:0 0 auto;min-width:64px;text-align:center;background:#111;color:#fff;border-radius:8px;padding:8px 8px;font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:800;letter-spacing:.5px}
 .pos-note-in{flex:1;min-width:0;font-size:15px;padding:10px 12px;border:1px solid #ddd;border-radius:10px;background:#f8f8f8;outline:none;font-family:'Barlow',sans-serif;-webkit-appearance:none}
 .pos-note-in:focus{border-color:#c00;background:#fff;box-shadow:0 0 0 2px rgba(204,0,0,.1)}
+.pos-note-block{margin-top:6px}
+.pos-cam{flex:0 0 auto;width:48px;height:44px;display:flex;align-items:center;justify-content:center;border:2px solid #ddd;border-radius:10px;background:#fff;color:#333;-webkit-tap-highlight-color:transparent}
+.pos-cam:active{background:#eee}
