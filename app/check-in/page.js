@@ -18,6 +18,7 @@ const CATS = [
   { key: 'doors',      label: 'Doors',                  category: 'body_glass' },
   { key: 'windshield', label: 'Windshield',             category: 'body_glass' },
   { key: 'interior',   label: 'Interior',               category: 'other' },
+  { key: 'coolant',    label: 'Coolant Level',          category: 'engine', truckOnly: true },
 ]
 
 // Tire positions. Trailer: 8 duals. Truck: Steer Left / Steer Right + 8 drive duals.
@@ -25,13 +26,15 @@ const DUAL_POS = ['LFI', 'LFO', 'LRI', 'LRO', 'RFI', 'RFO', 'RRI', 'RRO']
 const STEER_POS = ['Steer Left', 'Steer Right']
 
 const USER_KEY = 'se_checkin_user'
-const MAX_PAYLOAD = 4 * 1024 * 1024 // Vercel function body limit is 4.5MB
 
+// Resize to ≤1280px JPEG on the phone. Returns {name, dataUrl (preview), blob (upload)}.
 function compressImage(file) {
-  return new Promise(function (resolve) {
+  return new Promise(function (resolve, reject) {
     var reader = new FileReader()
+    reader.onerror = function () { reject(new Error('could not read ' + file.name)) }
     reader.onload = function (ev) {
       var img = new Image()
+      img.onerror = function () { reject(new Error('could not open ' + file.name)) }
       img.onload = function () {
         var MAX = 1280
         var w = img.width, h = img.height
@@ -42,7 +45,11 @@ function compressImage(file) {
         var canvas = document.createElement('canvas')
         canvas.width = w; canvas.height = h
         canvas.getContext('2d').drawImage(img, 0, 0, w, h)
-        resolve({ name: file.name, dataUrl: canvas.toDataURL('image/jpeg', 0.72) })
+        var dataUrl = canvas.toDataURL('image/jpeg', 0.72)
+        canvas.toBlob(function (blob) {
+          if (!blob) return reject(new Error('could not resize ' + file.name))
+          resolve({ name: file.name.replace(/\.[^.]+$/, '') + '.jpg', dataUrl, blob })
+        }, 'image/jpeg', 0.72)
       }
       img.src = ev.target.result
     }
@@ -204,24 +211,48 @@ function CheckInForm({ user, onLogout }) {
     })
   }
 
+  // Photos: resize on the phone, then PUT the JPEG straight into kpi storage
+  // (same signed-URL path as videos). The check-in body only carries the
+  // storage path, so there is no photo-count limit from the API body size.
+  // dataUrl is kept locally for the thumbnail only.
+  async function uploadPhoto(file) {
+    const ph = await compressImage(file)
+    const jpg = new File([ph.blob], ph.name, { type: 'image/jpeg' })
+    const up = await uploadDirect(jpg)
+    return { storage_path: up.storage_path, name: up.name, size: up.size, dataUrl: ph.dataUrl }
+  }
   function onItemPhotos(id, e, pos) {
     const files = Array.from(e.target.files)
     if (files.some(f => f.type.startsWith('video/'))) onVideos({ target: { files: files.filter(f => f.type.startsWith('video/')), value: '' } }, id)
-    files.forEach(function (file) {
+    files.forEach(async function (file) {
       if (!file.type.startsWith('image/')) return
-      compressImage(file).then(function (ph) { setItems(prev => prev.map(i => i.id === id ? { ...i, photos: [...i.photos, pos ? { ...ph, pos } : ph] } : i)) })
+      setUploading(n => n + 1)
+      try {
+        const ph = await uploadPhoto(file)
+        setItems(prev => prev.map(i => i.id === id ? { ...i, photos: [...i.photos, pos ? { ...ph, pos } : ph] } : i))
+      } catch (err) {
+        if (err.message !== 'PIN') setErrors(er => [...er, 'Photo upload failed: ' + (err.message || 'try again')])
+      } finally { setUploading(n => n - 1) }
     })
     e.target.value = ''
   }
   function onGeneralPhotos(e) {
     const files = Array.from(e.target.files)
     if (files.some(f => f.type.startsWith('video/'))) onVideos({ target: { files: files.filter(f => f.type.startsWith('video/')), value: '' } }, null)
-    files.forEach(function (file) {
+    files.forEach(async function (file) {
       if (!file.type.startsWith('image/')) return
-      compressImage(file).then(function (ph) { setPhotos(p => [...p, ph]) })
+      setUploading(n => n + 1)
+      try {
+        const ph = await uploadPhoto(file)
+        setPhotos(p => [...p, ph])
+      } catch (err) {
+        if (err.message !== 'PIN') setErrors(er => [...er, 'Photo upload failed: ' + (err.message || 'try again')])
+      } finally { setUploading(n => n - 1) }
     })
     e.target.value = ''
   }
+  // Strip the local preview before sending — only the storage ref goes to kpi.
+  const photoRef = (p) => p.pos ? { storage_path: p.storage_path, name: p.name, pos: p.pos } : { storage_path: p.storage_path, name: p.name }
   const pick = (refKey) => { const el = fileRefs.current[refKey]; if (el) el.click() }
 
   function validate(clean) {
@@ -234,7 +265,7 @@ function CheckInForm({ user, onLogout }) {
   async function submit(clean = false) {
     setErrors([])
     const errs = validate(clean)
-    if (uploading > 0) errs.push('Wait for the video upload to finish.')
+    if (uploading > 0) errs.push('Wait for the photo/video upload to finish.')
     if (errs.length) { setErrors(errs); return }
     const payload = {
       unit: unit.trim(), checkedInBy: tech, checkedInAt: new Date().toISOString(),
@@ -242,11 +273,10 @@ function CheckInForm({ user, onLogout }) {
       driverSource: info && info.driver && info.driver.name === driver.trim() ? info.driver.source : (driver.trim() ? 'entered' : null),
       unitSummary: info ? { summary: info.summary, inspection: info.inspection, odometer: info.odometer } : null,
       driverCode: info && info.driver && info.driver.name === driver.trim() ? (info.driver.code || null) : null,
-      items: items.map(i => ({ category: i.category, label: i.label, notes: i.notes, redTag: i.redTag, driverFault: i.driverFault, positions: i.positions || [], positionNotes: i.positionNotes || {}, photos: i.photos, videos: i.videos || [] })),
-      notes, photos, videos, clean,
+      items: items.map(i => ({ category: i.category, label: i.label, notes: i.notes, redTag: i.redTag, driverFault: i.driverFault, positions: i.positions || [], positionNotes: i.positionNotes || {}, photos: i.photos.map(photoRef), videos: i.videos || [] })),
+      notes, photos: photos.map(photoRef), videos, clean,
     }
     const body = JSON.stringify(payload)
-    if (body.length > MAX_PAYLOAD) { setErrors(['Too many photos for one check-in — remove a few and try again.']); return }
     setSubmitting(true)
     try {
       const r = await fetch('/api/check-in', { method: 'POST', headers: { 'Content-Type': 'application/json', ...hdrs }, body })
@@ -386,7 +416,7 @@ function CheckInForm({ user, onLogout }) {
         <div className="section-wrap">
           <p className="sec-lbl">Tap what needs attention</p>
           <div className="cat-grid">
-            {CATS.map(c => (
+            {CATS.filter(c => !c.truckOnly || isTruck).map(c => (
               <button key={c.key} className={'cat-btn' + (has(c.key) ? ' on' : '')} onClick={() => toggleCat(c)}>
                 {has(c.key) && <span className="cat-check">✓</span>}{c.label}
               </button>
@@ -550,7 +580,7 @@ function CheckInForm({ user, onLogout }) {
 
         {/* 5. Submit */}
         <div className="section-wrap" style={{ marginBottom: 32 }}>
-          {uploading > 0 && <div className="uploading">Uploading {uploading} video{uploading > 1 ? 's' : ''}…</div>}
+          {uploading > 0 && <div className="uploading">Uploading {uploading} file{uploading > 1 ? 's' : ''}…</div>}
           {items.length > 0 || notes.trim() || photos.length > 0 || videos.length > 0 ? (
             <>
               <button className="sub-btn" onClick={() => submit(false)} disabled={submitting}>
