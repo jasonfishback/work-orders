@@ -1,6 +1,5 @@
 'use client'
 import '../globals.css'
-import Link from 'next/link'
 import { useState, useRef } from 'react'
 
 const CC_MAP = {
@@ -164,7 +163,6 @@ export default function TicketPage() {
   return (
     <>
       <header className="hdr">
-        <Link href="/" className="hdr-back" aria-label="Home">&#8249; Home</Link>
         <img src="/logo.png" alt="Simon Express" className="logo" />
         <p className="tagline">Work Order Submission</p>
       </header>

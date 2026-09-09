@@ -96,7 +96,6 @@ export default function CheckInPage() {
     return (
       <>
         <header className="hdr">
-          <Link href="/" className="hdr-back" aria-label="Home">&#8249; Home</Link>
           <img src="/logo.png" alt="Simon Express" className="logo" />
           <p className="tagline">Equipment Check In</p>
         </header>
@@ -273,7 +272,6 @@ function CheckInForm({ user, onLogout }) {
     return (
       <>
         <header className="hdr">
-          <Link href="/" className="hdr-back" aria-label="Home">&#8249; Home</Link>
           <img src="/logo.png" alt="Simon Express" className="logo" />
           <p className="tagline">Equipment Check In</p>
         </header>
@@ -293,7 +291,6 @@ function CheckInForm({ user, onLogout }) {
   return (
     <>
       <header className="hdr">
-        <Link href="/" className="hdr-back" aria-label="Home">&#8249; Home</Link>
         <img src="/logo.png" alt="Simon Express" className="logo" />
         <p className="tagline">Equipment Check In</p>
       </header>
