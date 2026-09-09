@@ -36,7 +36,7 @@ function fmtDate(d) {
 }
 
 async function buildPdf(data) {
-  const { unit, checkedInBy, checkedInAt, driverName, unitSummary, items, notes, photos, clean } = data
+  const { unit, checkedInBy, checkedInAt, driverName, unitSummary, items, notes, photos, videos, clean } = data
   const doc = await PDFDocument.create()
   const bold = await doc.embedFont(StandardFonts.HelveticaBold)
   const reg = await doc.embedFont(StandardFonts.Helvetica)
@@ -111,6 +111,7 @@ async function buildPdf(data) {
     let yy = y - 18
     for (const ln of noteLines) { if (it.notes) { text(ln, ML + 12, yy, 10, reg, DGRAY); yy -= 13 } }
     y = y - blockH + 12 - 8
+    for (const v of (it.videos || [])) { need(14); text('Video: ' + v.name + ' (on kpi)', ML + 12, y, 9, reg, MGRAY); y -= 13 }
 
     // Photos: 3 per row, 160pt wide boxes
     if (photoRows) {
@@ -142,6 +143,12 @@ async function buildPdf(data) {
     need(24 + lines.length * 13)
     text('NOTES', ML, y, 8, bold, MGRAY); y -= 14
     for (const ln of lines) { need(13); text(ln, ML + 10, y, 10, reg, DGRAY); y -= 13 }
+    y -= 6
+  }
+  if (videos && videos.length) {
+    need(20 + videos.length * 13)
+    text('VIDEOS', ML, y, 8, bold, MGRAY); y -= 14
+    for (const v of videos) { text('Video: ' + v.name + ' (on kpi)', ML + 10, y, 9, reg, MGRAY); y -= 13 }
     y -= 6
   }
   if (photos && photos.length) {
@@ -185,19 +192,20 @@ export async function POST(req) {
   const checkedInAt = body.checkedInAt && !isNaN(new Date(body.checkedInAt)) ? new Date(body.checkedInAt).toISOString() : new Date().toISOString()
   const items = Array.isArray(body.items) ? body.items.map(i => ({
     category: String(i.category || 'other'), label: String(i.label || '').trim(), notes: String(i.notes || '').trim(),
-    redTag: !!i.redTag, driverFault: !!i.driverFault, positions: Array.isArray(i.positions) ? i.positions.map(p => String(p).slice(0, 12)).slice(0, 12) : [], photos: Array.isArray(i.photos) ? i.photos.filter(p => p && p.dataUrl) : [],
+    redTag: !!i.redTag, driverFault: !!i.driverFault, positions: Array.isArray(i.positions) ? i.positions.map(p => String(p).slice(0, 12)).slice(0, 12) : [], videos: Array.isArray(i.videos) ? i.videos.filter(v => v && typeof v.storage_path === 'string').map(v => ({ storage_path: v.storage_path, name: String(v.name || 'video'), size: Number(v.size) || 0 })) : [], photos: Array.isArray(i.photos) ? i.photos.filter(p => p && p.dataUrl) : [],
   })).filter(i => i.label) : []
   const clean = body.clean === true && !items.length
   const notes = String(body.notes || '').trim() || (clean ? 'Clean — no issues' : '')
   const photos = Array.isArray(body.photos) ? body.photos.filter(p => p && p.dataUrl) : []
+  const videos = Array.isArray(body.videos) ? body.videos.filter(v => v && typeof v.storage_path === 'string').map(v => ({ storage_path: v.storage_path, name: String(v.name || 'video'), size: Number(v.size) || 0 })) : []
   if (!unit || !checkedInBy) return Response.json({ error: 'unit and name required' }, { status: 400 })
-  if (!items.length && !notes) return Response.json({ error: 'add at least one item or a note' }, { status: 400 })
+  if (!items.length && !notes && !photos.length && !videos.length) return Response.json({ error: 'add at least one item or a note' }, { status: 400 })
 
   const target = kpiUrl('/api/admin/checkin-intake')
   const secret = process.env.KPI_SYNC_SECRET
   if (!target || !secret) return Response.json({ error: 'kpi sync not configured' }, { status: 500 })
 
-  const data = { unit, checkedInBy, checkedInAt, driverName: body.driverName || null, unitSummary: body.unitSummary || null, items, notes, photos, clean }
+  const data = { unit, checkedInBy, checkedInAt, driverName: body.driverName || null, unitSummary: body.unitSummary || null, items, notes, photos, videos, clean }
   let pdfBase64 = null
   try { pdfBase64 = await buildPdf(data) } catch (e) { console.error('check-in pdf failed:', e && e.message ? e.message : e) }
   const pdfName = `CheckIn_${unit}_${checkedInAt.slice(0, 10)}.pdf`
@@ -211,7 +219,7 @@ export async function POST(req) {
       body: JSON.stringify({
         unit, checkedInBy, checkedInAt,
         driverName: body.driverName || null, driverSource: body.driverSource || null, driverCode: body.driverCode || null,
-        items, notes, photos, pdfBase64, pdfName, clean,
+        items, notes, photos, videos, pdfBase64, pdfName, clean,
       }),
       signal: ctrl.signal,
     })

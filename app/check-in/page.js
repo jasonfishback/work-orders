@@ -128,6 +128,8 @@ function CheckInForm({ pin, onBadPin }) {
   const [addingCustom, setAddingCustom] = useState(false)
   const [notes, setNotes] = useState('')
   const [photos, setPhotos] = useState([])      // general photos
+  const [videos, setVideos] = useState([])      // general videos [{storage_path,name,size}]
+  const [uploading, setUploading] = useState(0) // in-flight direct uploads
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState(null)
   const [errors, setErrors] = useState([])
@@ -168,12 +170,12 @@ function CheckInForm({ pin, onBadPin }) {
   const has = (key) => items.some(i => i.key === key)
   function toggleCat(c) {
     if (has(c.key)) { setItems(prev => prev.filter(i => i.key !== c.key)); return }
-    setItems(prev => [...prev, { id: nextId.current++, key: c.key, label: c.label, category: c.category, notes: '', redTag: false, driverFault: false, positions: [], photos: [] }])
+    setItems(prev => [...prev, { id: nextId.current++, key: c.key, label: c.label, category: c.category, notes: '', redTag: false, driverFault: false, positions: [], photos: [], videos: [] }])
   }
   function addCustom() {
     const name = customName.trim()
     if (!name) return
-    setItems(prev => [...prev, { id: nextId.current++, key: 'custom-' + nextId.current, label: name, category: 'other', notes: '', redTag: false, driverFault: false, positions: [], photos: [] }])
+    setItems(prev => [...prev, { id: nextId.current++, key: 'custom-' + nextId.current, label: name, category: 'other', notes: '', redTag: false, driverFault: false, positions: [], photos: [], videos: [] }])
     setCustomName(''); setAddingCustom(false)
   }
   const upd = (id, patch) => setItems(prev => prev.map(i => i.id === id ? { ...i, ...patch } : i))
@@ -181,15 +183,48 @@ function CheckInForm({ pin, onBadPin }) {
   const isTruck = !!(info && info.found && /truck|tractor/i.test(String(info.summary && info.summary.type || '')))
   const removeItem = (id) => setItems(prev => prev.filter(i => i.id !== id))
 
+  // Videos go straight to kpi storage via a one-shot signed URL (bypasses the
+  // 4.5MB API body limit). Returns {storage_path, name, size} or throws.
+  async function uploadDirect(file) {
+    const r = await fetch('/api/upload-url', { method: 'POST', headers: { 'Content-Type': 'application/json', ...hdrs },
+      body: JSON.stringify({ unit: unit.trim() || 'unknown', name: file.name, contentType: file.type || 'video/mp4' }) })
+    if (r.status === 401) { onBadPin(); throw new Error('PIN') }
+    const j = await r.json()
+    if (!r.ok) throw new Error(j.error || 'upload not allowed')
+    const put = await fetch(j.signedUrl, { method: 'PUT', headers: { 'Content-Type': j.contentType }, body: file })
+    if (!put.ok) throw new Error('upload failed (' + put.status + ')')
+    return { storage_path: j.path, name: j.name, size: file.size }
+  }
+  const MAX_VIDEO = 50 * 1024 * 1024
+  function onVideos(e, itemId) {
+    const files = Array.from(e.target.files).filter(f => f.type.startsWith('video/'))
+    e.target.value = ''
+    files.forEach(async function (file) {
+      if (file.size > MAX_VIDEO) { setErrors(er => [...er, `${file.name} is over 50MB — keep videos under about a minute.`]); return }
+      setUploading(n => n + 1)
+      try {
+        const v = await uploadDirect(file)
+        if (itemId == null) setVideos(p => [...p, v])
+        else setItems(prev => prev.map(i => i.id === itemId ? { ...i, videos: [...(i.videos || []), v] } : i))
+      } catch (err) {
+        setErrors(er => [...er, 'Video upload failed: ' + (err.message || 'try again')])
+      } finally { setUploading(n => n - 1) }
+    })
+  }
+
   function onItemPhotos(id, e) {
-    Array.from(e.target.files).forEach(function (file) {
+    const files = Array.from(e.target.files)
+    if (files.some(f => f.type.startsWith('video/'))) onVideos({ target: { files: files.filter(f => f.type.startsWith('video/')), value: '' } }, id)
+    files.forEach(function (file) {
       if (!file.type.startsWith('image/')) return
       compressImage(file).then(function (ph) { setItems(prev => prev.map(i => i.id === id ? { ...i, photos: [...i.photos, ph] } : i)) })
     })
     e.target.value = ''
   }
   function onGeneralPhotos(e) {
-    Array.from(e.target.files).forEach(function (file) {
+    const files = Array.from(e.target.files)
+    if (files.some(f => f.type.startsWith('video/'))) onVideos({ target: { files: files.filter(f => f.type.startsWith('video/')), value: '' } }, null)
+    files.forEach(function (file) {
       if (!file.type.startsWith('image/')) return
       compressImage(file).then(function (ph) { setPhotos(p => [...p, ph]) })
     })
@@ -208,6 +243,7 @@ function CheckInForm({ pin, onBadPin }) {
   async function submit(clean = false) {
     setErrors([])
     const errs = validate(clean)
+    if (uploading > 0) errs.push('Wait for the video upload to finish.')
     if (errs.length) { setErrors(errs); return }
     const payload = {
       unit: unit.trim(), checkedInBy: tech, checkedInAt: new Date().toISOString(),
@@ -215,8 +251,8 @@ function CheckInForm({ pin, onBadPin }) {
       driverSource: info && info.driver && info.driver.name === driver.trim() ? info.driver.source : (driver.trim() ? 'entered' : null),
       unitSummary: info ? { summary: info.summary, inspection: info.inspection, odometer: info.odometer } : null,
       driverCode: info && info.driver && info.driver.name === driver.trim() ? (info.driver.code || null) : null,
-      items: items.map(i => ({ category: i.category, label: i.label, notes: i.notes, redTag: i.redTag, driverFault: i.driverFault, positions: i.positions || [], photos: i.photos })),
-      notes, photos, clean,
+      items: items.map(i => ({ category: i.category, label: i.label, notes: i.notes, redTag: i.redTag, driverFault: i.driverFault, positions: i.positions || [], photos: i.photos, videos: i.videos || [] })),
+      notes, photos, videos, clean,
     }
     const body = JSON.stringify(payload)
     if (body.length > MAX_PAYLOAD) { setErrors(['Too many photos for one check-in — remove a few and try again.']); return }
@@ -234,7 +270,7 @@ function CheckInForm({ pin, onBadPin }) {
 
   function reset() {
     setUnit(''); setInfo(null); setInfoState('idle'); setHistOpen(false); setDriver(''); setEditDriver(false)
-    setItems([]); setNotes(''); setPhotos([]); setErrors([]); setDone(null)
+    setItems([]); setNotes(''); setPhotos([]); setVideos([]); setErrors([]); setDone(null)
   }
 
   const redCount = items.filter(i => i.redTag).length
@@ -418,7 +454,8 @@ function CheckInForm({ pin, onBadPin }) {
               <textarea className="item-notes" placeholder={`Notes for ${it.label.toLowerCase()}…`} value={it.notes} onChange={e => upd(it.id, { notes: e.target.value })} />
               <div className="item-actions">
                 <input ref={el => { fileRefs.current['cam' + it.id] = el }} type="file" accept="image/*" capture="environment" onChange={e => onItemPhotos(it.id, e)} style={{ display: 'none' }} />
-                <input ref={el => { fileRefs.current['lib' + it.id] = el }} type="file" accept="image/*" multiple onChange={e => onItemPhotos(it.id, e)} style={{ display: 'none' }} />
+                <input ref={el => { fileRefs.current['lib' + it.id] = el }} type="file" accept="image/*,video/*" multiple onChange={e => onItemPhotos(it.id, e)} style={{ display: 'none' }} />
+                <input ref={el => { fileRefs.current['vid' + it.id] = el }} type="file" accept="video/*" capture="environment" onChange={e => onVideos(e, it.id)} style={{ display: 'none' }} />
                 <button className="act-btn" onClick={() => pick('cam' + it.id)}>
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
                   Take Photo
@@ -426,6 +463,10 @@ function CheckInForm({ pin, onBadPin }) {
                 <button className="act-btn" onClick={() => pick('lib' + it.id)}>
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
                   Photos
+                </button>
+                <button className="act-btn" onClick={() => pick('vid' + it.id)}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m22 8-6 4 6 4V8Z"/><rect x="2" y="6" width="14" height="12" rx="2"/></svg>
+                  Video
                 </button>
                 <button className={'act-btn red-tag' + (it.redTag ? ' on' : '')} onClick={() => upd(it.id, { redTag: !it.redTag })}>
                   <span className="rt-box">{it.redTag ? '✓' : ''}</span> Red Tag
@@ -435,6 +476,13 @@ function CheckInForm({ pin, onBadPin }) {
                 <span className="rt-box">{it.driverFault ? '✓' : ''}</span> Driver Fault
                 <span className="fault-sub">{it.driverFault ? 'caused by the driver' : 'off = normal wear & tear'}</span>
               </button>
+              {(it.videos || []).length > 0 && (
+                <div className="vids">
+                  {it.videos.map((v, i) => (
+                    <span key={i} className="vid-chip">▶ {v.name} <button className="vid-rm" onClick={() => upd(it.id, { videos: it.videos.filter((_, idx) => idx !== i) })}>×</button></span>
+                  ))}
+                </div>
+              )}
               {it.photos.length > 0 && (
                 <div className="thumbs">
                   {it.photos.map((p, i) => (
@@ -456,7 +504,8 @@ function CheckInForm({ pin, onBadPin }) {
             <textarea className="item-notes" style={{ marginBottom: 10 }} placeholder="General notes (optional)" value={notes} onChange={e => setNotes(e.target.value)} />
             <div className="item-actions">
               <input ref={el => { fileRefs.current['gcam'] = el }} type="file" accept="image/*" capture="environment" onChange={onGeneralPhotos} style={{ display: 'none' }} />
-              <input ref={el => { fileRefs.current['glib'] = el }} type="file" accept="image/*" multiple onChange={onGeneralPhotos} style={{ display: 'none' }} />
+              <input ref={el => { fileRefs.current['glib'] = el }} type="file" accept="image/*,video/*" multiple onChange={onGeneralPhotos} style={{ display: 'none' }} />
+              <input ref={el => { fileRefs.current['gvid'] = el }} type="file" accept="video/*" capture="environment" onChange={e => onVideos(e, null)} style={{ display: 'none' }} />
               <button className="act-btn" onClick={() => pick('gcam')}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
                 Take Photo
@@ -465,7 +514,18 @@ function CheckInForm({ pin, onBadPin }) {
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
                 Photos
               </button>
+              <button className="act-btn" onClick={() => pick('gvid')}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m22 8-6 4 6 4V8Z"/><rect x="2" y="6" width="14" height="12" rx="2"/></svg>
+                Video
+              </button>
             </div>
+            {videos.length > 0 && (
+              <div className="vids">
+                {videos.map((v, i) => (
+                  <span key={i} className="vid-chip">▶ {v.name} <button className="vid-rm" onClick={() => setVideos(vs => vs.filter((_, idx) => idx !== i))}>×</button></span>
+                ))}
+              </div>
+            )}
             {photos.length > 0 && (
               <div className="thumbs">
                 {photos.map((p, i) => (
@@ -481,7 +541,8 @@ function CheckInForm({ pin, onBadPin }) {
 
         {/* 5. Submit */}
         <div className="section-wrap" style={{ marginBottom: 32 }}>
-          {items.length > 0 || notes.trim() ? (
+          {uploading > 0 && <div className="uploading">Uploading {uploading} video{uploading > 1 ? 's' : ''}…</div>}
+          {items.length > 0 || notes.trim() || photos.length > 0 || videos.length > 0 ? (
             <>
               <button className="sub-btn" onClick={() => submit(false)} disabled={submitting}>
                 {submitting ? 'Saving…' : `Submit Check In${redCount ? ` · ${redCount} Red Tag${redCount > 1 ? 's' : ''}` : ''}`}
