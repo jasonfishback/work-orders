@@ -1,15 +1,15 @@
-// GET /api/unit-history?unit=25  (header x-checkin-pin)
+// GET /api/unit-history?unit=25  (header x-checkin-user)
 // PIN-gated proxy to kpi's secret-authed unit-history endpoint so the shared
 // secret never reaches the browser. `?ping=1` just validates the PIN.
 
-import { kpiUrl, pinOk } from '../../../lib/kpi'
+import { kpiUrl, techOk } from '../../../lib/kpi'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req) {
-  if (!pinOk(req)) return Response.json({ error: 'bad pin' }, { status: 401 })
+  if (!techOk(req)) return Response.json({ error: 'not on the list' }, { status: 401 })
   const { searchParams } = new URL(req.url)
-  if (searchParams.get('ping')) return Response.json({ ok: true })
+  if (searchParams.get('ping')) return Response.json({ ok: true, user: techOk(req) })
   const unit = String(searchParams.get('unit') || '').trim()
   if (!unit) return Response.json({ error: 'unit required' }, { status: 400 })
 

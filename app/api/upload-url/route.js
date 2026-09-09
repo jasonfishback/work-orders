@@ -1,13 +1,13 @@
-// POST /api/upload-url  (header x-checkin-pin)  body {unit, name, contentType}
+// POST /api/upload-url  (header x-checkin-user)  body {unit, name, contentType}
 // PIN-gated proxy to kpi's checkin-upload-url: returns a one-shot signed URL the
 // phone PUTs the video/photo to directly (bypasses the 4.5MB API body limit).
 
-import { kpiUrl, pinOk } from '../../../lib/kpi'
+import { kpiUrl, techOk } from '../../../lib/kpi'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(req) {
-  if (!pinOk(req)) return Response.json({ error: 'bad pin' }, { status: 401 })
+  if (!techOk(req)) return Response.json({ error: 'not on the list' }, { status: 401 })
   let body
   try { body = await req.json() } catch { return Response.json({ error: 'invalid json' }, { status: 400 }) }
   const target = kpiUrl('/api/admin/checkin-upload-url')

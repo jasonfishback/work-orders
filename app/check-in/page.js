@@ -6,7 +6,6 @@ import { useEffect, useRef, useState } from 'react'
 // Equipment Check In — quick yard inspection. Built for thumbs on an iPad/iPhone:
 // big buttons, one screen, few taps. PIN-gated (remembered per device).
 
-const TECHS = ['Jaden', 'Jordan', 'Rusty', 'Jason', 'TeJay']
 
 // Category tiles. `category` = kpi maintenance category id so the record
 // lines up with the rest of the maintenance history.
@@ -25,7 +24,7 @@ const CATS = [
 const DUAL_POS = ['LFI', 'LFO', 'LRI', 'LRO', 'RFI', 'RFO', 'RRI', 'RRO']
 const STEER_POS = ['Steer Left', 'Steer Right']
 
-const PIN_KEY = 'se_checkin_pin'
+const USER_KEY = 'se_checkin_user'
 const MAX_PAYLOAD = 4 * 1024 * 1024 // Vercel function body limit is 4.5MB
 
 function compressImage(file) {
@@ -57,40 +56,33 @@ function fmtDate(iso) {
   return p.length === 3 ? p[1] + '/' + p[2] + '/' + p[0] : iso
 }
 
-/* ---------------- PIN pad ---------------- */
-function PinGate({ onOk }) {
-  const [pin, setPin] = useState('')
+/* ---------------- Name gate ---------------- */
+function NameGate({ onOk }) {
+  const [name, setName] = useState('')
   const [bad, setBad] = useState(false)
   const [checking, setChecking] = useState(false)
-
-  useEffect(() => {
-    if (pin.length !== 4) return
-    setChecking(true)
-    fetch('/api/unit-history?ping=1', { headers: { 'x-checkin-pin': pin } })
-      .then(r => {
-        if (r.status === 401) { setBad(true); setPin(''); return }
-        try { localStorage.setItem(PIN_KEY, pin) } catch {}
-        onOk(pin)
-      })
-      .catch(() => { setBad(true); setPin('') })
-      .finally(() => setChecking(false))
-  }, [pin]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const press = (d) => { setBad(false); if (pin.length < 4) setPin(pin + d) }
-  const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫']
+  async function go() {
+    const n = name.trim()
+    if (!n) return
+    setChecking(true); setBad(false)
+    try {
+      const r = await fetch('/api/unit-history?ping=1', { headers: { 'x-checkin-user': n } })
+      if (r.status === 401) { setBad(true); return }
+      const j = await r.json()
+      const canon = j.user || n
+      try { localStorage.setItem(USER_KEY, canon) } catch {}
+      onOk(canon)
+    } catch { setBad(true) } finally { setChecking(false) }
+  }
   return (
     <div className="body">
       <div className="pin-wrap">
-        <p className="pin-title">Enter PIN</p>
-        <p className="pin-hint">Hint: last 4 of the shop phone</p>
-        <div className="pin-dots">{[0, 1, 2, 3].map(i => <span key={i} className={'pin-dot' + (pin.length > i ? ' on' : '') + (bad ? ' bad' : '')} />)}</div>
-        {bad && <p className="pin-bad">Wrong PIN — try again</p>}
-        <div className="pin-grid">
-          {keys.map((k, i) => k === '' ? <span key={i} /> : (
-            <button key={i} className={'pin-key' + (k === '⌫' ? ' pin-key-del' : '')} disabled={checking}
-              onClick={() => k === '⌫' ? setPin(pin.slice(0, -1)) : press(k)}>{k}</button>
-          ))}
-        </div>
+        <p className="pin-title">Who are you?</p>
+        <p className="pin-hint">Type your first name</p>
+        <input className="unit-input" style={{ marginTop: 16, letterSpacing: 1 }} type="text" autoFocus autoComplete="off" autoCapitalize="words" autoCorrect="off"
+          placeholder="First name" value={name} onChange={e => { setName(e.target.value); setBad(false) }} onKeyDown={e => { if (e.key === 'Enter') go() }} />
+        {bad && <p className="pin-bad" style={{ marginTop: 8 }}>That name isn&rsquo;t on the shop list.</p>}
+        <button className="sub-btn" style={{ marginTop: 14 }} onClick={go} disabled={checking || !name.trim()}>{checking ? 'Checking…' : 'Continue'}</button>
       </div>
     </div>
   )
@@ -98,9 +90,9 @@ function PinGate({ onOk }) {
 
 /* ---------------- Page ---------------- */
 export default function CheckInPage() {
-  const [pin, setPin] = useState(null)
-  useEffect(() => { try { const p = localStorage.getItem(PIN_KEY); if (p) setPin(p) } catch {} }, [])
-  if (!pin) {
+  const [user, setUser] = useState(null)
+  useEffect(() => { try { const u = localStorage.getItem(USER_KEY); if (u) setUser(u) } catch {} }, [])
+  if (!user) {
     return (
       <>
         <header className="hdr">
@@ -108,15 +100,16 @@ export default function CheckInPage() {
           <img src="/logo.png" alt="Simon Express" className="logo" />
           <p className="tagline">Equipment Check In</p>
         </header>
-        <PinGate onOk={setPin} />
+        <NameGate onOk={setUser} />
       </>
     )
   }
-  return <CheckInForm pin={pin} onBadPin={() => { try { localStorage.removeItem(PIN_KEY) } catch {}; setPin(null) }} />
+  return <CheckInForm user={user} onLogout={() => { try { localStorage.removeItem(USER_KEY) } catch {}; setUser(null) }} />
 }
 
-function CheckInForm({ pin, onBadPin }) {
-  const [tech, setTech] = useState('')
+function CheckInForm({ user, onLogout }) {
+  const tech = user
+  const onBadPin = onLogout
   const [unit, setUnit] = useState('')
   const [info, setInfo] = useState(null)        // unit-history payload
   const [infoState, setInfoState] = useState('idle') // idle | loading | ok | error
@@ -138,7 +131,7 @@ function CheckInForm({ pin, onBadPin }) {
   const unitTimer = useRef(null)
   const lastFetched = useRef('')
 
-  const hdrs = { 'x-checkin-pin': pin }
+  const hdrs = { 'x-checkin-user': user }
 
   // Look the unit up once the number settles (600ms after last keystroke).
   useEffect(() => {
@@ -234,7 +227,6 @@ function CheckInForm({ pin, onBadPin }) {
 
   function validate(clean) {
     const errs = []
-    if (!tech) errs.push('Tap your name.')
     if (!unit.trim()) errs.push('Enter the unit number.')
     if (!clean && !items.length && !notes.trim()) errs.push('Tap at least one item, add a note, or mark it Clean.')
     return errs
@@ -307,14 +299,9 @@ function CheckInForm({ pin, onBadPin }) {
 
       <div className="body">
 
-        {/* 1. Who */}
-        <div className="section-wrap">
-          <p className="sec-lbl">Who&rsquo;s checking it in</p>
-          <div className="tech-row">
-            {TECHS.map(t => (
-              <button key={t} className={'big-btn' + (tech === t ? ' on' : '')} onClick={() => setTech(t)}>{t}</button>
-            ))}
-          </div>
+        <div className="who-strip">
+          <span>Checking in as <b>{user}</b></span>
+          <button className="who-switch" onClick={onLogout}>Not you?</button>
         </div>
 
         {/* 2. Unit */}

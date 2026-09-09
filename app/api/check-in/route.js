@@ -1,9 +1,9 @@
-// POST /api/check-in  (header x-checkin-pin)
+// POST /api/check-in  (header x-checkin-user)
 // Builds the check-in sheet PDF (pdf-lib, photos embedded) and pushes the
 // whole record + PDF to kpi's checkin-intake. No email — kpi is the record.
 
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
-import { kpiUrl, pinOk } from '../../../lib/kpi'
+import { kpiUrl, techOk } from '../../../lib/kpi'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -183,12 +183,13 @@ async function buildPdf(data) {
 }
 
 export async function POST(req) {
-  if (!pinOk(req)) return Response.json({ error: 'bad pin' }, { status: 401 })
+  const tech = techOk(req)
+  if (!tech) return Response.json({ error: 'not on the list' }, { status: 401 })
   let body
   try { body = await req.json() } catch { return Response.json({ error: 'invalid json' }, { status: 400 }) }
 
   const unit = String(body.unit || '').trim()
-  const checkedInBy = String(body.checkedInBy || '').trim()
+  const checkedInBy = tech // server-resolved from the login name, never trusted from the body
   const checkedInAt = body.checkedInAt && !isNaN(new Date(body.checkedInAt)) ? new Date(body.checkedInAt).toISOString() : new Date().toISOString()
   const items = Array.isArray(body.items) ? body.items.map(i => ({
     category: String(i.category || 'other'), label: String(i.label || '').trim(), notes: String(i.notes || '').trim(),

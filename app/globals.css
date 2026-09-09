@@ -182,3 +182,6 @@ body{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
 .vid-rm{background:none;border:none;color:#ff8a8a;font-size:16px;line-height:1;padding:0 2px}
 .uploading{background:#fff8e6;border:1px solid #f5d58a;color:#92400e;border-radius:8px;padding:10px 14px;font-size:14px;font-weight:600;text-align:center;margin-bottom:10px}
 @media(max-width:420px){.item-actions{grid-template-columns:repeat(2,1fr)}.act-btn.red-tag{grid-column:span 2}}
+.who-strip{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;background:#111;color:#ddd;border-radius:12px;padding:10px 14px;font-size:14px}
+.who-strip b{color:#fff;font-family:'Barlow Condensed',sans-serif;font-size:18px;letter-spacing:.5px;text-transform:uppercase}
+.who-switch{background:none;border:1px solid #555;color:#bbb;border-radius:8px;padding:6px 10px;font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
