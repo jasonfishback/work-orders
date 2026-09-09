@@ -120,13 +120,13 @@ async function buildPdf(data) {
         try {
           const b64 = String(p.dataUrl || '').split(',')[1]
           if (b64) {
-            const img = await doc.embedJpg(Buffer.from(b64, 'base64'))
+            const img = await doc.embedJpg(Uint8Array.from(Buffer.from(b64, 'base64'))) // fresh copy: pooled Buffers give pdf-lib a wrong byte offset ("SOI not found")
             const s = Math.min(boxW / img.width, boxH / img.height)
             const w = img.width * s, h = img.height * s
             const x = ML + col * (boxW + 8) + (boxW - w) / 2
             page.drawImage(img, { x, y: y + (boxH - h) / 2, width: w, height: h })
           }
-        } catch (e) { /* skip bad image */ }
+        } catch (e) { console.error('check-in pdf: item photo skipped:', e && e.message ? e.message : e) }
         col = (col + 1) % 3
         if (col === 0) y -= 8
       }
@@ -153,12 +153,12 @@ async function buildPdf(data) {
       try {
         const b64 = String(p.dataUrl || '').split(',')[1]
         if (b64) {
-          const img = await doc.embedJpg(Buffer.from(b64, 'base64'))
+          const img = await doc.embedJpg(Uint8Array.from(Buffer.from(b64, 'base64'))) // fresh copy: pooled Buffers give pdf-lib a wrong byte offset ("SOI not found")
           const s = Math.min(boxW / img.width, boxH / img.height)
           const w = img.width * s, h = img.height * s
           page.drawImage(img, { x: ML + col * (boxW + 8) + (boxW - w) / 2, y: y + (boxH - h) / 2, width: w, height: h })
         }
-      } catch (e) { /* skip */ }
+      } catch (e) { console.error('check-in pdf: photo skipped:', e && e.message ? e.message : e) }
       col = (col + 1) % 3
       if (col === 0) y -= 8
     }
