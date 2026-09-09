@@ -21,6 +21,10 @@ const CATS = [
   { key: 'interior',   label: 'Interior',               category: 'other' },
 ]
 
+// Tire positions. Trailer: 8 duals. Truck: Steer Left / Steer Right + 8 drive duals.
+const DUAL_POS = ['LFI', 'LFO', 'LRI', 'LRO', 'RFI', 'RFO', 'RRI', 'RRO']
+const STEER_POS = ['Steer Left', 'Steer Right']
+
 const PIN_KEY = 'se_checkin_pin'
 const MAX_PAYLOAD = 4 * 1024 * 1024 // Vercel function body limit is 4.5MB
 
@@ -164,15 +168,17 @@ function CheckInForm({ pin, onBadPin }) {
   const has = (key) => items.some(i => i.key === key)
   function toggleCat(c) {
     if (has(c.key)) { setItems(prev => prev.filter(i => i.key !== c.key)); return }
-    setItems(prev => [...prev, { id: nextId.current++, key: c.key, label: c.label, category: c.category, notes: '', redTag: false, photos: [] }])
+    setItems(prev => [...prev, { id: nextId.current++, key: c.key, label: c.label, category: c.category, notes: '', redTag: false, driverFault: false, positions: [], photos: [] }])
   }
   function addCustom() {
     const name = customName.trim()
     if (!name) return
-    setItems(prev => [...prev, { id: nextId.current++, key: 'custom-' + nextId.current, label: name, category: 'other', notes: '', redTag: false, photos: [] }])
+    setItems(prev => [...prev, { id: nextId.current++, key: 'custom-' + nextId.current, label: name, category: 'other', notes: '', redTag: false, driverFault: false, positions: [], photos: [] }])
     setCustomName(''); setAddingCustom(false)
   }
   const upd = (id, patch) => setItems(prev => prev.map(i => i.id === id ? { ...i, ...patch } : i))
+  const togglePos = (id, pos) => setItems(prev => prev.map(i => i.id !== id ? i : { ...i, positions: (i.positions || []).includes(pos) ? i.positions.filter(p => p !== pos) : [...(i.positions || []), pos] }))
+  const isTruck = !!(info && info.found && /truck|tractor/i.test(String(info.summary && info.summary.type || '')))
   const removeItem = (id) => setItems(prev => prev.filter(i => i.id !== id))
 
   function onItemPhotos(id, e) {
@@ -191,25 +197,26 @@ function CheckInForm({ pin, onBadPin }) {
   }
   const pick = (refKey) => { const el = fileRefs.current[refKey]; if (el) el.click() }
 
-  function validate() {
+  function validate(clean) {
     const errs = []
     if (!tech) errs.push('Tap your name.')
     if (!unit.trim()) errs.push('Enter the unit number.')
-    if (!items.length && !notes.trim()) errs.push('Tap at least one item, or add a note.')
+    if (!clean && !items.length && !notes.trim()) errs.push('Tap at least one item, add a note, or mark it Clean.')
     return errs
   }
 
-  async function submit() {
+  async function submit(clean = false) {
     setErrors([])
-    const errs = validate()
+    const errs = validate(clean)
     if (errs.length) { setErrors(errs); return }
     const payload = {
       unit: unit.trim(), checkedInBy: tech, checkedInAt: new Date().toISOString(),
       driverName: driver.trim() || null,
       driverSource: info && info.driver && info.driver.name === driver.trim() ? info.driver.source : (driver.trim() ? 'entered' : null),
       unitSummary: info ? { summary: info.summary, inspection: info.inspection, odometer: info.odometer } : null,
-      items: items.map(i => ({ category: i.category, label: i.label, notes: i.notes, redTag: i.redTag, photos: i.photos })),
-      notes, photos,
+      driverCode: info && info.driver && info.driver.name === driver.trim() ? (info.driver.code || null) : null,
+      items: items.map(i => ({ category: i.category, label: i.label, notes: i.notes, redTag: i.redTag, driverFault: i.driverFault, positions: i.positions || [], photos: i.photos })),
+      notes, photos, clean,
     }
     const body = JSON.stringify(payload)
     if (body.length > MAX_PAYLOAD) { setErrors(['Too many photos for one check-in — remove a few and try again.']); return }
@@ -219,7 +226,7 @@ function CheckInForm({ pin, onBadPin }) {
       if (r.status === 401) { onBadPin(); return }
       const j = await r.json()
       if (!r.ok) throw new Error(j.error || 'Server error')
-      setDone({ unit: unit.trim(), redTags: j.red_tags || 0 })
+      setDone({ unit: unit.trim(), redTags: j.red_tags || 0, clean })
     } catch (e) {
       setErrors([e.message || 'Something went wrong.'])
     } finally { setSubmitting(false) }
@@ -244,8 +251,8 @@ function CheckInForm({ pin, onBadPin }) {
         <div className="body">
           <div className="done-card">
             <div className="done-check">✓</div>
-            <div className="done-title">Unit {done.unit} checked in</div>
-            <div className="done-sub">{done.redTags > 0 ? `${done.redTags} red tag${done.redTags > 1 ? 's' : ''} sent to the work list.` : 'Saved to the unit’s maintenance file.'}</div>
+            <div className="done-title">Unit {done.unit} {done.clean ? 'marked clean' : 'checked in'}</div>
+            <div className="done-sub">{done.clean ? 'Clean quick inspection saved for this unit and driver.' : done.redTags > 0 ? `${done.redTags} red tag${done.redTags > 1 ? 's' : ''} sent to the work list.` : 'Saved to the unit’s maintenance file.'}</div>
             <button className="sub-btn" onClick={reset}>Check In Another</button>
             <Link href="/" className="done-home">Back to home</Link>
           </div>
@@ -383,6 +390,31 @@ function CheckInForm({ pin, onBadPin }) {
                 <span className="item-title">{it.label}</span>
                 <button className="li-rm" onClick={() => removeItem(it.id)} title="Remove">×</button>
               </div>
+              {it.key === 'tires' && (
+                <button className={'pos-toggle' + (it.posOpen ? ' open' : '')} onClick={() => upd(it.id, { posOpen: !it.posOpen })}>
+                  {it.posOpen ? 'Hide Tire Positions ▴' : ((it.positions || []).length ? `Tire Positions: ${it.positions.join(', ')} ▾` : 'Expand Tire Positions ▾')}
+                </button>
+              )}
+              {it.key === 'tires' && it.posOpen && (
+                <div className="pos-wrap">
+                  {isTruck && (
+                    <>
+                      <div className="pos-lbl">Steers</div>
+                      <div className="pos-grid pos-grid-2">
+                        {STEER_POS.map(p => (
+                          <button key={p} className={'pos-btn' + ((it.positions || []).includes(p) ? ' on' : '')} onClick={() => togglePos(it.id, p)}>{p}</button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                  <div className="pos-lbl" style={isTruck ? { marginTop: 8 } : undefined}>{isTruck ? 'Drives' : 'Tire position · trailer'}</div>
+                  <div className="pos-grid">
+                    {DUAL_POS.map(p => (
+                      <button key={p} className={'pos-btn' + ((it.positions || []).includes(p) ? ' on' : '')} onClick={() => togglePos(it.id, p)}>{p}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <textarea className="item-notes" placeholder={`Notes for ${it.label.toLowerCase()}…`} value={it.notes} onChange={e => upd(it.id, { notes: e.target.value })} />
               <div className="item-actions">
                 <input ref={el => { fileRefs.current['cam' + it.id] = el }} type="file" accept="image/*" capture="environment" onChange={e => onItemPhotos(it.id, e)} style={{ display: 'none' }} />
@@ -399,6 +431,10 @@ function CheckInForm({ pin, onBadPin }) {
                   <span className="rt-box">{it.redTag ? '✓' : ''}</span> Red Tag
                 </button>
               </div>
+              <button className={'fault-btn' + (it.driverFault ? ' on' : '')} onClick={() => upd(it.id, { driverFault: !it.driverFault })}>
+                <span className="rt-box">{it.driverFault ? '✓' : ''}</span> Driver Fault
+                <span className="fault-sub">{it.driverFault ? 'caused by the driver' : 'off = normal wear & tear'}</span>
+              </button>
               {it.photos.length > 0 && (
                 <div className="thumbs">
                   {it.photos.map((p, i) => (
@@ -445,10 +481,21 @@ function CheckInForm({ pin, onBadPin }) {
 
         {/* 5. Submit */}
         <div className="section-wrap" style={{ marginBottom: 32 }}>
-          <button className="sub-btn" onClick={submit} disabled={submitting}>
-            {submitting ? 'Saving…' : `Submit Check In${redCount ? ` · ${redCount} Red Tag${redCount > 1 ? 's' : ''}` : ''}`}
-          </button>
-          <p className="dest-note">Saves to the unit&rsquo;s file on kpi{redCount ? ' · red tags go to the shop work list' : ''}</p>
+          {items.length > 0 || notes.trim() ? (
+            <>
+              <button className="sub-btn" onClick={() => submit(false)} disabled={submitting}>
+                {submitting ? 'Saving…' : `Submit Check In${redCount ? ` · ${redCount} Red Tag${redCount > 1 ? 's' : ''}` : ''}`}
+              </button>
+              <p className="dest-note">Saves to the unit&rsquo;s file on kpi{redCount ? ' · red tags go to the shop work list' : ''}</p>
+            </>
+          ) : (
+            <>
+              <button className="sub-btn clean-btn" onClick={() => submit(true)} disabled={submitting}>
+                {submitting ? 'Saving…' : '✓ Clean — No Issues'}
+              </button>
+              <p className="dest-note">Records a clean quick inspection for this unit and its driver</p>
+            </>
+          )}
           {errors.length > 0 && <div className="err-box">{errors.map((e, i) => <div key={i}>! {e}</div>)}</div>}
         </div>
 

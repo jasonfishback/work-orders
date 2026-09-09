@@ -36,7 +36,7 @@ function fmtDate(d) {
 }
 
 async function buildPdf(data) {
-  const { unit, checkedInBy, checkedInAt, driverName, unitSummary, items, notes, photos } = data
+  const { unit, checkedInBy, checkedInAt, driverName, unitSummary, items, notes, photos, clean } = data
   const doc = await PDFDocument.create()
   const bold = await doc.embedFont(StandardFonts.HelveticaBold)
   const reg = await doc.embedFont(StandardFonts.Helvetica)
@@ -67,6 +67,9 @@ async function buildPdf(data) {
   if (redCount) {
     const lbl = `${redCount} RED TAG${redCount > 1 ? 'S' : ''}`
     text(lbl, W - MR - 12 - bold.widthOfTextAtSize(lbl, 10), y - 20, 10, bold, rgb(1, 0.4, 0.4))
+  } else if (clean) {
+    const lbl = 'CLEAN — NO ISSUES'
+    text(lbl, W - MR - 12 - bold.widthOfTextAtSize(lbl, 10), y - 20, 10, bold, rgb(0.4, 0.9, 0.6))
   }
   y -= 44
 
@@ -94,7 +97,7 @@ async function buildPdf(data) {
   y -= 6
   page.drawLine({ start: { x: ML, y }, end: { x: W - MR, y }, thickness: 0.5, color: BORDER })
   y -= 14
-  if (!items.length) { text('No items flagged.', ML, y, 10, reg, MGRAY); y -= 18 }
+  if (!items.length) { text(clean ? 'Clean — no issues found on this quick inspection.' : 'No items flagged.', ML, y, 10, reg, clean ? rgb(0.02, 0.37, 0.27) : MGRAY); y -= 18 }
 
   for (const it of items) {
     const noteLines = wrap(it.notes, reg, 10, CW - 24)
@@ -102,11 +105,9 @@ async function buildPdf(data) {
     const blockH = 22 + noteLines.length * 13 + (it.notes ? 6 : 0)
     need(blockH + 8)
     page.drawRectangle({ x: ML, y: y - blockH + 12, width: CW, height: blockH, color: it.redTag ? PINK : LGRAY, borderColor: it.redTag ? RED : BORDER, borderWidth: it.redTag ? 1 : 0.5 })
-    text(it.label, ML + 10, y - 2, 11, bold, it.redTag ? RED : NAVY)
-    if (it.redTag) {
-      const lbl = 'RED TAG — FIX BEFORE UNIT GOES OUT'
-      text(lbl, W - MR - 10 - bold.widthOfTextAtSize(lbl, 8), y - 1, 8, bold, RED)
-    }
+    text(it.label + ((it.positions || []).length ? '  ·  ' + it.positions.join(', ') : ''), ML + 10, y - 2, 11, bold, it.redTag ? RED : NAVY)
+    const flags = [it.driverFault ? 'DRIVER FAULT' : null, it.redTag ? 'RED TAG — FIX BEFORE UNIT GOES OUT' : null].filter(Boolean).join('   ·   ')
+    if (flags) text(flags, W - MR - 10 - bold.widthOfTextAtSize(flags, 8), y - 1, 8, bold, RED)
     let yy = y - 18
     for (const ln of noteLines) { if (it.notes) { text(ln, ML + 12, yy, 10, reg, DGRAY); yy -= 13 } }
     y = y - blockH + 12 - 8
@@ -184,9 +185,10 @@ export async function POST(req) {
   const checkedInAt = body.checkedInAt && !isNaN(new Date(body.checkedInAt)) ? new Date(body.checkedInAt).toISOString() : new Date().toISOString()
   const items = Array.isArray(body.items) ? body.items.map(i => ({
     category: String(i.category || 'other'), label: String(i.label || '').trim(), notes: String(i.notes || '').trim(),
-    redTag: !!i.redTag, photos: Array.isArray(i.photos) ? i.photos.filter(p => p && p.dataUrl) : [],
+    redTag: !!i.redTag, driverFault: !!i.driverFault, positions: Array.isArray(i.positions) ? i.positions.map(p => String(p).slice(0, 12)).slice(0, 12) : [], photos: Array.isArray(i.photos) ? i.photos.filter(p => p && p.dataUrl) : [],
   })).filter(i => i.label) : []
-  const notes = String(body.notes || '').trim()
+  const clean = body.clean === true && !items.length
+  const notes = String(body.notes || '').trim() || (clean ? 'Clean — no issues' : '')
   const photos = Array.isArray(body.photos) ? body.photos.filter(p => p && p.dataUrl) : []
   if (!unit || !checkedInBy) return Response.json({ error: 'unit and name required' }, { status: 400 })
   if (!items.length && !notes) return Response.json({ error: 'add at least one item or a note' }, { status: 400 })
@@ -195,7 +197,7 @@ export async function POST(req) {
   const secret = process.env.KPI_SYNC_SECRET
   if (!target || !secret) return Response.json({ error: 'kpi sync not configured' }, { status: 500 })
 
-  const data = { unit, checkedInBy, checkedInAt, driverName: body.driverName || null, unitSummary: body.unitSummary || null, items, notes, photos }
+  const data = { unit, checkedInBy, checkedInAt, driverName: body.driverName || null, unitSummary: body.unitSummary || null, items, notes, photos, clean }
   let pdfBase64 = null
   try { pdfBase64 = await buildPdf(data) } catch (e) { console.error('check-in pdf failed:', e && e.message ? e.message : e) }
   const pdfName = `CheckIn_${unit}_${checkedInAt.slice(0, 10)}.pdf`
@@ -208,8 +210,8 @@ export async function POST(req) {
       headers: { 'Content-Type': 'application/json', 'x-wo-secret': secret },
       body: JSON.stringify({
         unit, checkedInBy, checkedInAt,
-        driverName: body.driverName || null, driverSource: body.driverSource || null,
-        items, notes, photos, pdfBase64, pdfName,
+        driverName: body.driverName || null, driverSource: body.driverSource || null, driverCode: body.driverCode || null,
+        items, notes, photos, pdfBase64, pdfName, clean,
       }),
       signal: ctrl.signal,
     })
