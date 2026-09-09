@@ -193,3 +193,4 @@ body{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
 .pos-note-block{margin-top:6px}
 .pos-cam{flex:0 0 auto;width:48px;height:44px;display:flex;align-items:center;justify-content:center;border:2px solid #ddd;border-radius:10px;background:#fff;color:#333;-webkit-tap-highlight-color:transparent}
 .pos-cam:active{background:#eee}
+.hdr-title{font-family:'Barlow Condensed',sans-serif;font-size:26px;font-weight:800;letter-spacing:2px;color:#fff;text-transform:uppercase;margin:0;line-height:1.1}

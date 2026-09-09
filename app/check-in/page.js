@@ -96,8 +96,7 @@ export default function CheckInPage() {
     return (
       <>
         <header className="hdr">
-          <img src="/logo.png" alt="Simon Express" className="logo" />
-          <p className="tagline">Equipment Check In</p>
+          <h1 className="hdr-title">Equipment Check</h1>
         </header>
         <NameGate onOk={setUser} />
       </>
@@ -272,8 +271,7 @@ function CheckInForm({ user, onLogout }) {
     return (
       <>
         <header className="hdr">
-          <img src="/logo.png" alt="Simon Express" className="logo" />
-          <p className="tagline">Equipment Check In</p>
+          <h1 className="hdr-title">Equipment Check</h1>
         </header>
         <div className="body">
           <div className="done-card">
@@ -291,8 +289,7 @@ function CheckInForm({ user, onLogout }) {
   return (
     <>
       <header className="hdr">
-        <img src="/logo.png" alt="Simon Express" className="logo" />
-        <p className="tagline">Equipment Check In</p>
+        <h1 className="hdr-title">Equipment Check</h1>
       </header>
 
       <div className="body">

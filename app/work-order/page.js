@@ -163,8 +163,7 @@ export default function TicketPage() {
   return (
     <>
       <header className="hdr">
-        <img src="/logo.png" alt="Simon Express" className="logo" />
-        <p className="tagline">Work Order Submission</p>
+        <h1 className="hdr-title">Work Order</h1>
       </header>
 
       <div className="body">
