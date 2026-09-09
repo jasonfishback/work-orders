@@ -163,16 +163,17 @@ function CheckInForm({ user, onLogout }) {
   const has = (key) => items.some(i => i.key === key)
   function toggleCat(c) {
     if (has(c.key)) { setItems(prev => prev.filter(i => i.key !== c.key)); return }
-    setItems(prev => [...prev, { id: nextId.current++, key: c.key, label: c.label, category: c.category, notes: '', redTag: false, driverFault: false, positions: [], photos: [], videos: [] }])
+    setItems(prev => [...prev, { id: nextId.current++, key: c.key, label: c.label, category: c.category, notes: '', redTag: false, driverFault: false, positions: [], positionNotes: {}, photos: [], videos: [] }])
   }
   function addCustom() {
     const name = customName.trim()
     if (!name) return
-    setItems(prev => [...prev, { id: nextId.current++, key: 'custom-' + nextId.current, label: name, category: 'other', notes: '', redTag: false, driverFault: false, positions: [], photos: [], videos: [] }])
+    setItems(prev => [...prev, { id: nextId.current++, key: 'custom-' + nextId.current, label: name, category: 'other', notes: '', redTag: false, driverFault: false, positions: [], positionNotes: {}, photos: [], videos: [] }])
     setCustomName(''); setAddingCustom(false)
   }
   const upd = (id, patch) => setItems(prev => prev.map(i => i.id === id ? { ...i, ...patch } : i))
   const togglePos = (id, pos) => setItems(prev => prev.map(i => i.id !== id ? i : { ...i, positions: (i.positions || []).includes(pos) ? i.positions.filter(p => p !== pos) : [...(i.positions || []), pos] }))
+  const setPosNote = (id, pos, val) => setItems(prev => prev.map(i => i.id !== id ? i : { ...i, positionNotes: { ...(i.positionNotes || {}), [pos]: val } }))
   const isTruck = !!(info && info.found && /truck|tractor/i.test(String(info.summary && info.summary.type || '')))
   const removeItem = (id) => setItems(prev => prev.filter(i => i.id !== id))
 
@@ -243,7 +244,7 @@ function CheckInForm({ user, onLogout }) {
       driverSource: info && info.driver && info.driver.name === driver.trim() ? info.driver.source : (driver.trim() ? 'entered' : null),
       unitSummary: info ? { summary: info.summary, inspection: info.inspection, odometer: info.odometer } : null,
       driverCode: info && info.driver && info.driver.name === driver.trim() ? (info.driver.code || null) : null,
-      items: items.map(i => ({ category: i.category, label: i.label, notes: i.notes, redTag: i.redTag, driverFault: i.driverFault, positions: i.positions || [], photos: i.photos, videos: i.videos || [] })),
+      items: items.map(i => ({ category: i.category, label: i.label, notes: i.notes, redTag: i.redTag, driverFault: i.driverFault, positions: i.positions || [], positionNotes: i.positionNotes || {}, photos: i.photos, videos: i.videos || [] })),
       notes, photos, videos, clean,
     }
     const body = JSON.stringify(payload)
@@ -436,6 +437,17 @@ function CheckInForm({ user, onLogout }) {
                       <button key={p} className={'pos-btn' + ((it.positions || []).includes(p) ? ' on' : '')} onClick={() => togglePos(it.id, p)}>{p}</button>
                     ))}
                   </div>
+                  {(it.positions || []).length > 0 && (
+                    <div className="pos-notes">
+                      <div className="pos-lbl" style={{ marginTop: 10 }}>Notes per tire</div>
+                      {[...STEER_POS, ...DUAL_POS].filter(p => it.positions.includes(p)).map(p => (
+                        <div key={p} className="pos-note-row">
+                          <span className="pos-note-tag">{p}</span>
+                          <input className="pos-note-in" placeholder={`What's wrong with ${p}?`} value={(it.positionNotes || {})[p] || ''} onChange={e => setPosNote(it.id, p, e.target.value)} />
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
               <textarea className="item-notes" placeholder={`Notes for ${it.label.toLowerCase()}…`} value={it.notes} onChange={e => upd(it.id, { notes: e.target.value })} />

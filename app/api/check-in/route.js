@@ -111,6 +111,10 @@ async function buildPdf(data) {
     let yy = y - 18
     for (const ln of noteLines) { if (it.notes) { text(ln, ML + 12, yy, 10, reg, DGRAY); yy -= 13 } }
     y = y - blockH + 12 - 8
+    for (const [pos, note] of Object.entries(it.positionNotes || {})) {
+      const lines = wrap(pos + ': ' + note, reg, 9.5, CW - 24)
+      for (const ln of lines) { need(13); text(ln, ML + 12, y, 9.5, reg, DGRAY); y -= 12 }
+    }
     for (const v of (it.videos || [])) { need(14); text('Video: ' + v.name + ' (on kpi)', ML + 12, y, 9, reg, MGRAY); y -= 13 }
 
     // Photos: 3 per row, 160pt wide boxes
@@ -193,7 +197,7 @@ export async function POST(req) {
   const checkedInAt = body.checkedInAt && !isNaN(new Date(body.checkedInAt)) ? new Date(body.checkedInAt).toISOString() : new Date().toISOString()
   const items = Array.isArray(body.items) ? body.items.map(i => ({
     category: String(i.category || 'other'), label: String(i.label || '').trim(), notes: String(i.notes || '').trim(),
-    redTag: !!i.redTag, driverFault: !!i.driverFault, positions: Array.isArray(i.positions) ? i.positions.map(p => String(p).slice(0, 12)).slice(0, 12) : [], videos: Array.isArray(i.videos) ? i.videos.filter(v => v && typeof v.storage_path === 'string').map(v => ({ storage_path: v.storage_path, name: String(v.name || 'video'), size: Number(v.size) || 0 })) : [], photos: Array.isArray(i.photos) ? i.photos.filter(p => p && p.dataUrl) : [],
+    redTag: !!i.redTag, driverFault: !!i.driverFault, positions: Array.isArray(i.positions) ? i.positions.map(p => String(p).slice(0, 12)).slice(0, 12) : [], positionNotes: i.positionNotes && typeof i.positionNotes === 'object' ? Object.fromEntries(Object.entries(i.positionNotes).filter(([k, v]) => String(v || '').trim()).map(([k, v]) => [String(k).slice(0, 12), String(v).trim().slice(0, 500)])) : {}, videos: Array.isArray(i.videos) ? i.videos.filter(v => v && typeof v.storage_path === 'string').map(v => ({ storage_path: v.storage_path, name: String(v.name || 'video'), size: Number(v.size) || 0 })) : [], photos: Array.isArray(i.photos) ? i.photos.filter(p => p && p.dataUrl) : [],
   })).filter(i => i.label) : []
   const clean = body.clean === true && !items.length
   const notes = String(body.notes || '').trim() || (clean ? 'Clean — no issues' : '')
