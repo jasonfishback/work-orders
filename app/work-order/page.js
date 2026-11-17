@@ -42,6 +42,14 @@ export default function TicketPage() {
   const [errors,       setErrors]       = useState([])
   const fileRef = useRef()
   const nextId  = useRef(2)
+  // Photo plumbing: the latest photo list, in-flight uploads (by photo id) and
+  // in-flight resizes, so Submit can wait for all of them.
+  const photosRef  = useRef([])
+  photosRef.current = photos
+  const uploadsRef = useRef(new Map())
+  const pendingRef = useRef(new Set())
+  const unitRef    = useRef('')
+  unitRef.current  = unitNumber
 
   const personName  = personKey === 'other' ? otherName : (NAME_MAP[personKey] || '')
   const ccAddresses = personKey === 'other'
@@ -79,13 +87,16 @@ export default function TicketPage() {
     setParts(prev => prev.map(p => p.id === id ? { ...p, [field]: val } : p))
   }
 
-    function compressImage(file) {
-    return new Promise(function(resolve) {
+  // Resize to <=1280px JPEG on the phone. Returns {name, dataUrl (preview), blob (upload)}.
+  function compressImage(file) {
+    return new Promise(function(resolve, reject) {
       var reader = new FileReader()
+      reader.onerror = function() { reject(new Error('could not read ' + file.name)) }
       reader.onload = function(ev) {
         var img = new Image()
+        img.onerror = function() { reject(new Error('could not open ' + file.name)) }
         img.onload = function() {
-          var MAX = 1200
+          var MAX = 1280
           var w = img.width, h = img.height
           if (w > MAX || h > MAX) {
             if (w > h) { h = Math.round(h * MAX / w); w = MAX }
@@ -94,7 +105,11 @@ export default function TicketPage() {
           var canvas = document.createElement('canvas')
           canvas.width = w; canvas.height = h
           canvas.getContext('2d').drawImage(img, 0, 0, w, h)
-          resolve({ name: file.name, dataUrl: canvas.toDataURL('image/jpeg', 0.75) })
+          var dataUrl = canvas.toDataURL('image/jpeg', 0.72)
+          canvas.toBlob(function(blob) {
+            if (!blob) return reject(new Error('could not resize ' + file.name))
+            resolve({ name: file.name.replace(/\.[^.]+$/, '') + '.jpg', dataUrl: dataUrl, blob: blob })
+          }, 'image/jpeg', 0.72)
         }
         img.src = ev.target.result
       }
@@ -102,12 +117,74 @@ export default function TicketPage() {
     })
   }
 
+  // Photos go straight from the phone into storage (one-shot signed URL), so
+  // the work order itself only carries a reference to each photo and there is
+  // no limit on how many can be attached. Resolves to the storage path, or
+  // null if the upload failed (Submit retries, then falls back to sending the
+  // photo inline).
+  function startUpload(ph) {
+    const setStatus = (patch) => setPhotos(list => list.map(x => x.id === ph.id ? { ...x, ...patch } : x))
+    setStatus({ status: 'uploading' })
+    const run = (async () => {
+      const ctrl = new AbortController()
+      const timer = setTimeout(() => ctrl.abort(), 90000)
+      try {
+        const r = await fetch('/api/wo-upload-url', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ctrl.signal,
+          body: JSON.stringify({ unit: unitRef.current.trim() || 'unknown', name: ph.name, contentType: 'image/jpeg' }),
+        })
+        const j = await r.json()
+        if (!r.ok || !j.signedUrl) throw new Error(j.error || 'upload not allowed')
+        const put = await fetch(j.signedUrl, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: ph.blob, signal: ctrl.signal })
+        if (!put.ok) throw new Error('upload failed (' + put.status + ')')
+        setStatus({ status: 'done', storage_path: j.path })
+        return j.path
+      } catch (err) {
+        setStatus({ status: 'failed' })
+        return null
+      } finally { clearTimeout(timer) }
+    })()
+    uploadsRef.current.set(ph.id, run)
+    return run
+  }
+
   function handlePhotos(e) {
     Array.from(e.target.files).forEach(function(file) {
       if (!file.type.startsWith('image/')) return
-      compressImage(file).then(function(photo) { setPhotos(function(p) { return [...p, photo] }) })
+      const job = compressImage(file).then(function(c) {
+        const ph = { id: nextId.current++, name: c.name, dataUrl: c.dataUrl, blob: c.blob, status: 'uploading' }
+        setPhotos(function(list) { return [...list, ph] })
+        startUpload(ph)
+      }).catch(function(err) {
+        setErrors(function(er) { return [...er, 'Photo skipped - ' + (err.message || 'could not read it') + '. Try taking it again.'] })
+      }).finally(function() { pendingRef.current.delete(job) })
+      pendingRef.current.add(job)
     })
     e.target.value = ''
+  }
+
+  // Called by Submit: waits for every photo, retries failed uploads once, and
+  // returns what to send. A photo that still won't upload is sent inline (up
+  // to what the request can carry) so the work order never waits on signal.
+  async function settlePhotos() {
+    await Promise.all(Array.from(pendingRef.current))
+    await new Promise(r => setTimeout(r, 60)) // let React commit any photo just added
+    await Promise.all(photosRef.current.map(ph => uploadsRef.current.get(ph.id)))
+    const paths = new Map()
+    for (const ph of photosRef.current) {
+      let path = await uploadsRef.current.get(ph.id)
+      if (!path) path = await startUpload(ph)
+      paths.set(ph.id, path)
+    }
+    const out = []
+    let inlineBudget = 3000000, dropped = 0
+    for (const ph of photosRef.current) {
+      const path = paths.get(ph.id)
+      if (path) out.push({ storage_path: path, name: ph.name })
+      else if (ph.dataUrl.length <= inlineBudget) { inlineBudget -= ph.dataUrl.length; out.push({ name: ph.name, dataUrl: ph.dataUrl }) }
+      else dropped++
+    }
+    return { photos: out, dropped }
   }
 
   function validate() {
@@ -130,6 +207,7 @@ export default function TicketPage() {
     setSubmitting(true)
 
     try {
+      const settled = await settlePhotos()
       const res = await fetch('/api/submit-ticket', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -143,18 +221,24 @@ export default function TicketPage() {
           rateType,
           flatAmount: rateType === 'flat' ? effectiveFlatAmount : null,
           hourlyRate: rateType === 'hourly' ? hourlyRate : null,
-          photos,
+          photos: settled.photos,
+          photosDropped: settled.dropped,
         }),
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Server error')
+      let data = null
+      try { data = await res.json() } catch (_) {}
+      if (!res.ok || !data) {
+        throw new Error((data && data.error) || 'The server had a problem (' + res.status + '). Nothing was lost - please tap Submit again.')
+      }
       setSuccess(true)
       setUnitNumber(''); setPersonKey(''); setOtherName(''); setOtherEmail('')
       setDateCompleted(today()); setLineItems([{ id: nextId.current++, description: '', hours: '', rate: '' }])
       setParts([])
       setRateType('flat'); setFlatAmount(''); setHourlyRate(''); setPhotos([]); setNotes('')
+      uploadsRef.current.clear()
     } catch (err) {
-      setErrors([err.message || 'Something went wrong.'])
+      const offline = err && (err.name === 'TypeError' || /fetch|network/i.test(err.message || ''))
+      setErrors([offline ? 'Could not reach the server - check your signal and tap Submit again. Nothing was lost.' : (err.message || 'Something went wrong. Nothing was lost - please tap Submit again.')])
     } finally {
       setSubmitting(false)
     }
@@ -349,10 +433,12 @@ export default function TicketPage() {
             </div>
             {photos.length > 0 && (
               <div className="thumbs">
-                {photos.map((p, i) => (
-                  <div key={i} className="thumb">
-                    <img src={p.dataUrl} alt={p.name} />
-                    <button className="thumb-rm" onClick={() => setPhotos(ph => ph.filter((_, idx) => idx !== i))}>×</button>
+                {photos.map((p) => (
+                  <div key={p.id} className="thumb">
+                    <img src={p.dataUrl} alt={p.name} style={p.status === 'uploading' ? { opacity: 0.45 } : undefined} />
+                    {p.status === 'uploading' && <span style={{ position: 'absolute', left: 0, right: 0, bottom: 4, textAlign: 'center', fontSize: 10, fontWeight: 700, color: '#333' }}>Uploading…</span>}
+                    {p.status === 'failed' && <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, textAlign: 'center', fontSize: 9, fontWeight: 700, color: '#fff', background: 'rgba(204,0,0,.85)', borderRadius: '0 0 7px 7px', padding: '1px 0' }}>Will retry</span>}
+                    <button className="thumb-rm" onClick={() => setPhotos(ph => ph.filter(x => x.id !== p.id))}>×</button>
                   </div>
                 ))}
               </div>

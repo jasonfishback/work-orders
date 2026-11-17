@@ -4,6 +4,103 @@ import { kpiUrl } from '../../../lib/kpi'
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
+export const dynamic = 'force-dynamic'
+export const maxDuration = 120
+
+// ---------------------------------------------------------------------------
+// Helpers. The rule for this route: a work order that reaches us gets emailed.
+// Photos, the PDF and the kpi sync each degrade on their own (and say so in
+// the email) instead of failing the whole submission.
+// ---------------------------------------------------------------------------
+const PHOTO_PATH_OK = /^checkins\/uploads\/[A-Za-z0-9_./-]+$/
+const PDF_PHOTO_BUDGET = 18 * 1024 * 1024 // photo bytes embedded in the PDF (email cap is 40MB)
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const errMsg = (e) => (e && e.message ? e.message : String(e))
+
+async function fetchT(url, opts, ms) {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), ms)
+  try { return await fetch(url, { ...opts, signal: ctrl.signal, cache: 'no-store' }) }
+  finally { clearTimeout(t) }
+}
+
+function kpiPost(path, payload, ms) {
+  const url = kpiUrl(path)
+  const secret = process.env.KPI_SYNC_SECRET
+  if (!url || !secret) return Promise.reject(new Error('KPI_SYNC_URL / KPI_SYNC_SECRET not set'))
+  return fetchT(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-wo-secret': secret },
+    body: JSON.stringify(payload),
+  }, ms)
+}
+
+async function mapLimit(list, limit, fn) {
+  let next = 0
+  async function worker() { while (next < list.length) { const i = next++; await fn(list[i], i) } }
+  await Promise.all(Array.from({ length: Math.min(limit, list.length) }, worker))
+}
+
+function escHtml(v) {
+  return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+// Turns whatever the form sent into [{name, storage_path|null, bytes|null}].
+// New form: photos are already in kpi storage -> {storage_path, name}; we pull
+// the bytes back for the PDF. Old/cached form or a failed phone upload:
+// inline {dataUrl, name}; we use the bytes and also push the photo into kpi
+// storage so it still lands on the equipment profile. Never throws.
+async function resolvePhotos(rawPhotos, unitNumber) {
+  const list = (Array.isArray(rawPhotos) ? rawPhotos : []).filter(Boolean).slice(0, 200).map((ph) => {
+    const out = { name: String(ph.name || 'photo').slice(0, 120), storage_path: null, bytes: null }
+    if (typeof ph.storage_path === 'string' && PHOTO_PATH_OK.test(ph.storage_path) && !ph.storage_path.includes('..')) {
+      out.storage_path = ph.storage_path
+    } else if (typeof ph.dataUrl === 'string' && ph.dataUrl.startsWith('data:image/')) {
+      try { out.bytes = Buffer.from(ph.dataUrl.split(',')[1] || '', 'base64'); out.inline = true } catch (_) {}
+    }
+    return out
+  }).filter((ph) => ph.storage_path || (ph.bytes && ph.bytes.length))
+
+  // Stored photos -> bytes
+  const stored = list.filter((ph) => ph.storage_path)
+  if (stored.length) {
+    let urls = {}
+    for (let attempt = 0; attempt < 2 && !Object.keys(urls).length; attempt++) {
+      try {
+        const r = await kpiPost('/api/admin/wo-intake/files', { action: 'photo-urls', paths: stored.map((ph) => ph.storage_path) }, 15000)
+        const j = await r.json().catch(() => ({}))
+        if (r.ok && j.urls) urls = j.urls
+        else console.error('photo-urls: kpi returned', r.status, j && j.error)
+      } catch (e) { console.error('photo-urls failed:', errMsg(e)) }
+    }
+    await mapLimit(stored, 6, async (ph) => {
+      const u = urls[ph.storage_path]
+      if (!u) return
+      for (let attempt = 0; attempt < 2 && !ph.bytes; attempt++) {
+        try {
+          const r = await fetchT(u, {}, 20000)
+          if (r.ok) ph.bytes = Buffer.from(await r.arrayBuffer())
+        } catch (e) { console.error('photo download failed:', ph.storage_path, errMsg(e)) }
+      }
+    })
+  }
+
+  // Inline photos -> kpi storage (best effort)
+  await mapLimit(list.filter((ph) => ph.inline), 4, async (ph) => {
+    try {
+      const isPng = ph.bytes[0] === 0x89 && ph.bytes[1] === 0x50
+      const contentType = isPng ? 'image/png' : 'image/jpeg'
+      const r = await kpiPost('/api/admin/checkin-upload-url', { unit: 'wo-' + String(unitNumber || 'unknown'), name: ph.name, contentType }, 10000)
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || !j.signedUrl) return
+      const put = await fetchT(j.signedUrl, { method: 'PUT', headers: { 'Content-Type': contentType }, body: ph.bytes }, 30000)
+      if (put.ok) ph.storage_path = j.path
+    } catch (e) { console.error('inline photo store failed:', errMsg(e)) }
+  })
+
+  return list
+}
+
 const TO = ['jfishback@simonexpress.com', 'csimon@simonexpress.com', 'tsimon@simonexpress.com']
 // Link-X is being cancelled — no longer BCC work orders to them.
 const BCC = []
@@ -353,9 +450,9 @@ async function buildInvoicePdf(data, invoiceNum) {
       text(pp, 'Photo ' + (pi + 1) + ' of ' + photos.length + ': ' + (photo.name || ''), ML, H - 58, 8, bold, NAVY)
       drawLine(pp, ML, H - 64, W - MR, H - 64, BORDER, 0.5)
       try {
-        const base64 = photo.dataUrl.split(',')[1]
-        const bytes  = Buffer.from(base64, 'base64')
-        const isPng  = photo.dataUrl.startsWith('data:image/png')
+        const bytes  = photo.bytes
+        if (!bytes || !bytes.length) throw new Error('no image data')
+        const isPng  = bytes[0] === 0x89 && bytes[1] === 0x50
         const img    = isPng ? await pdfDoc.embedPng(bytes) : await pdfDoc.embedJpg(bytes)
         const availW = W - ML - MR, availH = H - 110
         const scale  = Math.min(availW / img.width, availH / img.height, 1)
@@ -375,7 +472,23 @@ async function buildInvoicePdf(data, invoiceNum) {
 export async function POST(request) {
   try {
     const body = await request.json()
-    const { personKey, personName, otherEmail, unitNumber, lineItems, notes, rateType, flatAmount, hourlyRate, photos } = body
+    const { personKey, personName, otherEmail, unitNumber, lineItems, notes, rateType, flatAmount, hourlyRate } = body
+    const warnings = [] // shown in the email when something had to degrade
+
+    // Photos: get bytes for the PDF, storage paths for kpi.
+    const allPhotos = await resolvePhotos(body.photos, unitNumber)
+    const droppedOnPhone = parseInt(body.photosDropped, 10) || 0
+    if (droppedOnPhone > 0) warnings.push(droppedOnPhone + ' photo' + (droppedOnPhone > 1 ? 's' : '') + ' could not be uploaded from the phone and ' + (droppedOnPhone > 1 ? 'are' : 'is') + ' missing from this work order.')
+    // Keep the PDF at an emailable size: photos past the budget stay in kpi only.
+    const photos = []
+    let photoBytes = 0, notInPdf = 0
+    for (const ph of allPhotos) {
+      const size = ph.bytes ? ph.bytes.length : 0
+      if (photoBytes + size > PDF_PHOTO_BUDGET) { notInPdf++; continue }
+      photoBytes += size
+      photos.push(ph)
+    }
+    if (notInPdf > 0) warnings.push(notInPdf + ' photo' + (notInPdf > 1 ? 's were' : ' was') + ' left out of the PDF to keep it small enough to email. All photos are on the unit\'s equipment profile in kpi.')
     const partsList = (Array.isArray(body.parts) ? body.parts : [])
       .filter(p => (p.description || '').trim() || parseFloat(p.cost) > 0)
     const partsTotal = partsList.reduce((s, p) => s + (parseFloat(p.cost) || 0), 0)
@@ -430,9 +543,25 @@ export async function POST(request) {
       invoiceNum = 'WO-T' + Date.now().toString(36).toUpperCase()
     }
 
-    const pdfBuffer = await buildInvoicePdf({ ...body, dateCompleted, totalAmount, notes, flatAmount: effectiveFlatAmount }, invoiceNum)
-    const pdfBase64 = pdfBuffer.toString('base64')
-    const pdfName   = 'WorkOrder_' + (unitNumber || '').replace(/[^a-zA-Z0-9]/g, '_') + '_' + dateCompleted + '.pdf'
+    // PDF. If it can't be built with photos, build it without; if it can't be
+    // built at all, the email still goes out with the details in the body.
+    const pdfData = { ...body, dateCompleted, totalAmount, notes, flatAmount: effectiveFlatAmount }
+    const pdfName = 'WorkOrder_' + String(unitNumber || '').replace(/[^a-zA-Z0-9]/g, '_') + '_' + dateCompleted + '.pdf'
+    let pdfBuffer = null
+    let pdfHasPhotos = photos.length > 0
+    try {
+      pdfBuffer = await buildInvoicePdf({ ...pdfData, photos }, invoiceNum)
+    } catch (e) {
+      console.error('PDF build failed, retrying without photos:', e)
+      pdfHasPhotos = false
+      try {
+        pdfBuffer = await buildInvoicePdf({ ...pdfData, photos: [] }, invoiceNum)
+        if (photos.length) warnings.push('The photos could not be added to the PDF.')
+      } catch (e2) {
+        console.error('PDF build failed without photos:', e2)
+        warnings.push('The PDF could not be generated for this work order. The details are in this email.')
+      }
+    }
 
     // Email line item rows
     const itemRows = (lineItems || []).map((item, idx) => {
@@ -442,7 +571,7 @@ export async function POST(request) {
       const amt        = useFlatRate ? itemRate : (hrs * hourlyRateVal)
       return `<tr style="background:${idx % 2 === 0 ? '#fff' : '#f9f9f9'}">
         <td style="padding:8px 12px;font-size:13px;color:#999;border-bottom:1px solid #f0f0f0;text-align:center;width:28px;">${idx + 1}</td>
-        <td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #f0f0f0;">${item.description || '-'}</td>
+        <td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #f0f0f0;">${escHtml(item.description) || '-'}</td>
         <td style="padding:8px 12px;font-size:13px;text-align:center;border-bottom:1px solid #f0f0f0;">${hrs > 0 ? hrs.toFixed(2) : '-'}</td>
         <td style="padding:8px 12px;font-size:13px;text-align:right;border-bottom:1px solid #f0f0f0;font-weight:600;">${amt > 0 ? '$' + amt.toFixed(2) : '-'}</td>
       </tr>`
@@ -459,8 +588,8 @@ export async function POST(request) {
           <th style="padding:8px 12px;font-size:11px;text-align:right;color:#999;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #e0e0e0;">Cost</th>
         </tr></thead>
         <tbody>${partsList.map((p, idx) => `<tr style="background:${idx % 2 === 0 ? '#fff' : '#f9f9f9'}">
-          <td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #f0f0f0;">${p.description || '-'}</td>
-          <td style="padding:8px 12px;font-size:13px;color:#555;border-bottom:1px solid #f0f0f0;">${p.vendor || '-'}</td>
+          <td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #f0f0f0;">${escHtml(p.description) || '-'}</td>
+          <td style="padding:8px 12px;font-size:13px;color:#555;border-bottom:1px solid #f0f0f0;">${escHtml(p.vendor) || '-'}</td>
           <td style="padding:8px 12px;font-size:13px;text-align:right;font-weight:600;border-bottom:1px solid #f0f0f0;">$${(parseFloat(p.cost) || 0).toFixed(2)}</td>
         </tr>`).join('')}</tbody>
       </table>
@@ -527,12 +656,12 @@ export async function POST(request) {
       <span style="display:block;font-size:10px;color:#9aafca;letter-spacing:2px;text-transform:uppercase;margin-top:2px;">Work Order Invoice - ${invoiceNum}</span>
     </div>
   </div>
-  <div style="padding:24px;">
+  <div style="padding:24px;"><!--WARNINGS-->
     <table style="width:100%;margin-bottom:20px;border-collapse:collapse;">
       <tr>
         <td style="width:48%;vertical-align:top;background:#f5f5f5;border:1px solid #ddd;border-radius:6px;padding:12px;">
           <div style="font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Pay To</div>
-          <div style="font-size:15px;font-weight:700;color:#1a1a2e;">${personName}</div>
+          <div style="font-size:15px;font-weight:700;color:#1a1a2e;">${escHtml(personName)}</div>
           <div style="font-size:12px;color:#666;margin-top:4px;">${rateType === 'hourly' ? 'Rate: $' + hourlyRateVal.toFixed(2) + '/hr' : 'Flat Rate'}</div>
         </td>
         <td style="width:4%;"></td>
@@ -544,7 +673,7 @@ export async function POST(request) {
       </tr>
     </table>
     <div style="background:#111;color:#fff;border-radius:6px;padding:9px 14px;font-size:12px;margin-bottom:20px;display:flex;gap:24px;">
-      <span><strong>Unit:</strong> ${unitNumber}</span>
+      <span><strong>Unit:</strong> ${escHtml(unitNumber)}</span>
       <span><strong>Date Completed:</strong> ${dateCompleted}</span>
       <span><strong>Rate Type:</strong> ${rateType === 'hourly' ? 'Hourly' : 'Flat Rate'}</span>
     </div>
@@ -570,62 +699,104 @@ export async function POST(request) {
     ${partsHtml}
     ${splitPayHtml}
     ${calendarHtml}
-    ${notes && notes.trim() ? `<div style="margin-bottom:4px;"><div style="font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Notes</div><div style="background:#f8f8f8;border-left:3px solid #ddd;padding:10px 14px;border-radius:0 6px 6px 0;font-size:13px;line-height:1.6;color:#444;white-space:pre-wrap;">${notes.trim()}</div></div>` : ''}
-    ${photos && photos.length > 0 ? `<p style="font-size:12px;color:#aaa;margin-top:16px;margin-bottom:0;">${photos.length} photo${photos.length > 1 ? 's' : ''} attached - see PDF.</p>` : ''}
+    ${notes && notes.trim() ? `<div style="margin-bottom:4px;"><div style="font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Notes</div><div style="background:#f8f8f8;border-left:3px solid #ddd;padding:10px 14px;border-radius:0 6px 6px 0;font-size:13px;line-height:1.6;color:#444;white-space:pre-wrap;">${escHtml(notes.trim())}</div></div>` : ''}
+    ${allPhotos.length > 0 ? `<p style="font-size:12px;color:#aaa;margin-top:16px;margin-bottom:0;">${allPhotos.length} photo${allPhotos.length > 1 ? 's' : ''} attached - see PDF.</p>` : ''}
   </div>
   <div style="padding:14px 24px;border-top:1px solid #f0f0f0;text-align:center;">
     <p style="font-size:11px;color:#aaa;margin:0;">Simon Express Work Order System - ${invoiceNum}</p>
   </div>
 </div></body></html>`
 
-    const { data, error } = await resend.emails.send({
+    // Send. Retries, then sheds weight (photos, then the PDF) rather than fail.
+    const withWarnings = (list) => list.length
+      ? html.replace('<!--WARNINGS-->', `<div style="margin-bottom:16px;background:#fff8e1;border:1px solid #f0d58a;border-radius:6px;padding:10px 14px;font-size:12px;color:#7a5b00;line-height:1.5;">${list.map(escHtml).join('<br>')}</div>`)
+      : html
+    const sendEmail = (pdfBuf, warnList) => resend.emails.send({
       from: 'Simon Express Work Orders <tickets@simonexpress.com>',
       to: TO,
       cc: ccList.length > 0 ? ccList : undefined,
       subject: 'Work Order - ' + unitNumber + ' - ' + personName + ' - ' + dateCompleted,
       bcc: BCC.length ? BCC : undefined,
-      html,
-      attachments: [{ filename: pdfName, content: pdfBase64 }],
-    })
+      html: withWarnings(warnList),
+      attachments: pdfBuf ? [{ filename: pdfName, content: pdfBuf.toString('base64') }] : undefined,
+    }).catch((e) => ({ data: null, error: { message: errMsg(e) } }))
 
-    if (error) return Response.json({ error: error.message }, { status: 500 })
+    let sent = await sendEmail(pdfBuffer, warnings)
+    if (sent.error) {
+      console.error('email send failed, retrying:', sent.error.message)
+      await sleep(1500)
+      sent = await sendEmail(pdfBuffer, warnings)
+    }
+    if (sent.error && pdfBuffer && pdfHasPhotos) {
+      console.error('email send failed again, retrying with a photo-free PDF:', sent.error.message)
+      try {
+        const lean = await buildInvoicePdf({ ...pdfData, photos: [] }, invoiceNum)
+        sent = await sendEmail(lean, [...warnings, 'The photos were left out of the PDF so this email could be delivered. They are on the unit\'s equipment profile in kpi.'])
+      } catch (e) { console.error('lean PDF build failed:', e) }
+    }
+    if (sent.error && pdfBuffer) {
+      console.error('email send failed again, retrying without the PDF:', sent.error.message)
+      sent = await sendEmail(null, [...warnings, 'The PDF could not be attached to this email. It is stored on the unit\'s equipment profile in kpi.'])
+    }
+    const { data, error } = sent
+    if (error) {
+      console.error('email send failed for good:', error.message)
+      return Response.json({ error: 'The work order could not be emailed (' + error.message + '). Nothing was lost - please tap Submit again.' }, { status: 502 })
+    }
 
     // Sync the work order into the kpi maintenance system (kpi.simonexpress.com).
     // Best-effort: a failure here must never break the invoice email above.
+    // The PDF goes straight into kpi storage (a photo-heavy PDF is too big for
+    // an API body); the intake call then only carries data + storage paths.
     try {
-      const syncUrl = process.env.KPI_SYNC_URL
-      const syncSecret = process.env.KPI_SYNC_SECRET
-      if (syncUrl && syncSecret) {
-        const ctrl = new AbortController()
-        const t = setTimeout(() => ctrl.abort(), 8000)
-        await fetch(syncUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-wo-secret': syncSecret },
-          body: JSON.stringify({
-            invoiceNum,
-            unitNumber,
-            personKey,
-            personName,
-            dateCompleted: body.dateCompleted, // raw YYYY-MM-DD
-            rateType,
-            totalAmount, // labor (tech payout)
-            parts: partsList.map(p => ({ description: p.description, vendor: p.vendor, cost: p.cost })),
-            lineItems,
-            notes,
-            pdfBase64,
-            pdfName,
-          }),
-          signal: ctrl.signal,
-        }).catch((e) => console.error('kpi sync failed:', e && e.message ? e.message : e))
-        clearTimeout(t)
+      let pdfStoragePath = null
+      if (pdfBuffer) {
+        for (let attempt = 0; attempt < 2 && !pdfStoragePath; attempt++) {
+          try {
+            const r = await kpiPost('/api/admin/wo-intake/files', { action: 'pdf-upload', invoiceNum }, 10000)
+            const j = await r.json().catch(() => ({}))
+            if (!r.ok || !j.signedUrl) throw new Error('pdf-upload returned HTTP ' + r.status)
+            const put = await fetchT(j.signedUrl, { method: 'PUT', headers: { 'Content-Type': 'application/pdf', 'x-upsert': 'true' }, body: pdfBuffer }, 45000)
+            if (!put.ok) throw new Error('PDF upload returned HTTP ' + put.status)
+            pdfStoragePath = j.path
+          } catch (e) { console.error('kpi PDF upload failed:', errMsg(e)) }
+        }
       }
+      // Fallback: a small PDF can still ride in the body the old way.
+      const inlinePdf = !pdfStoragePath && pdfBuffer && pdfBuffer.length < 2.5 * 1024 * 1024 ? pdfBuffer.toString('base64') : null
+      const payload = {
+        invoiceNum,
+        unitNumber,
+        personKey,
+        personName,
+        dateCompleted: body.dateCompleted, // raw YYYY-MM-DD
+        rateType,
+        totalAmount, // labor (tech payout)
+        parts: partsList.map(p => ({ description: p.description, vendor: p.vendor, cost: p.cost })),
+        lineItems,
+        notes,
+        photos: allPhotos.filter((ph) => ph.storage_path).map((ph) => ({ storage_path: ph.storage_path, name: ph.name })),
+        pdfStoragePath,
+        pdfBase64: inlinePdf,
+        pdfName,
+      }
+      let synced = false
+      for (let attempt = 0; attempt < 3 && !synced; attempt++) {
+        if (attempt) await sleep(1500 * attempt)
+        try {
+          const r = await kpiPost('/api/admin/wo-intake', payload, 25000)
+          if (r.ok) synced = true
+          else console.error('kpi sync: HTTP', r.status, (await r.text().catch(() => '')).slice(0, 200))
+        } catch (e) { console.error('kpi sync failed:', errMsg(e)) }
+      }
+      if (!synced) console.error('kpi sync gave up for', invoiceNum)
     } catch (e) {
-      console.error('kpi sync error:', e && e.message ? e.message : e)
+      console.error('kpi sync error:', errMsg(e))
     }
 
     return Response.json({ success: true, id: data.id })
   } catch (err) {
     console.error(err)
-    return Response.json({ error: 'Internal server error' }, { status: 500 })
+    return Response.json({ error: 'Something went wrong sending the work order. Nothing was lost - please tap Submit again.' }, { status: 500 })
   }
 }
