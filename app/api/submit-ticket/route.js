@@ -33,22 +33,52 @@ function drawRect(page, x, y, w, h, fill, strokeColor, strokeWidth) {
 function drawLine(page, x1, y1, x2, y2, color, thickness) {
   page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: thickness || 0.5, color: color || BORDER })
 }
+// The PDF's built-in Helvetica can only draw WinAnsi characters. Anything
+// else (a line break, a tab, an emoji) makes pdf-lib throw, which used to
+// fail the whole submission with "Internal server error" whenever someone
+// pressed Enter in the notes box. Keep line breaks (wrapText turns them into
+// new lines) and swap anything undrawable for a safe stand-in.
+const WINANSI_EXTRA = '\u20AC\u201A\u0192\u201E\u2026\u2020\u2021\u02C6\u2030\u0160\u2039\u0152\u017D\u2018\u2019\u201C\u201D\u2022\u2013\u2014\u02DC\u2122\u0161\u203A\u0153\u017E\u0178'
+function pdfSafe(str) {
+  let out = ''
+  for (const ch of String(str == null ? '' : str).replace(/\r\n?/g, '\n')) {
+    const c = ch.codePointAt(0)
+    if (ch === '\n') out += '\n'
+    else if (ch === '\t') out += ' '
+    else if ((c >= 0x20 && c <= 0x7E) || (c >= 0xA0 && c <= 0xFF) || WINANSI_EXTRA.includes(ch)) out += ch
+    else if (c < 0x20 || c === 0x7F || c === 0x200B || c === 0x200D || (c >= 0xFE00 && c <= 0xFE0F)) continue // invisible
+    else out += '?'
+  }
+  return out
+}
 function text(page, str, x, y, size, font, color) {
   if (!str) return
-  page.drawText(String(str), { x, y, size: size || 10, font, color: color || BLACK })
+  const s = pdfSafe(str).replace(/\n/g, ' ')
+  if (!s) return
+  page.drawText(s, { x, y, size: size || 10, font, color: color || BLACK })
 }
+// Wraps to maxW. Line breaks in the input start a new line, and a single
+// "word" wider than the line (a long part number, no spaces) is split.
 function wrapText(str, font, size, maxW) {
-  const words = String(str || '').split(' ')
   const lines = []
-  let line = ''
-  for (const w of words) {
-    const test = line ? line + ' ' + w : w
-    if (font.widthOfTextAtSize(test, size) > maxW) {
-      if (line) lines.push(line)
-      line = w
-    } else line = test
+  for (const para of pdfSafe(str).split('\n')) {
+    let line = ''
+    for (let w of para.split(' ')) {
+      while (font.widthOfTextAtSize(w, size) > maxW && w.length > 1) {
+        let n = w.length - 1
+        while (n > 1 && font.widthOfTextAtSize(w.slice(0, n), size) > maxW) n--
+        if (line) { lines.push(line); line = '' }
+        lines.push(w.slice(0, n))
+        w = w.slice(n)
+      }
+      const test = line ? line + ' ' + w : w
+      if (font.widthOfTextAtSize(test, size) > maxW) {
+        if (line) lines.push(line)
+        line = w
+      } else line = test
+    }
+    if (line) lines.push(line)
   }
-  if (line) lines.push(line)
   return lines
 }
 
@@ -72,56 +102,66 @@ async function buildInvoicePdf(data, invoiceNum) {
   const W = 612, H = 792, ML = 48, MR = 48, MT = 48
   const CW = W - ML - MR
 
-  const p1 = pdfDoc.addPage([W, H])
+  let pg = pdfDoc.addPage([W, H])
+  const contentPages = [pg]
   let y = H - MT
+  // Long work orders flow onto extra pages instead of running off the bottom.
+  const BOTTOM = 60
+  function need(h) {
+    if (y - h < BOTTOM) {
+      pg = pdfDoc.addPage([W, H])
+      contentPages.push(pg)
+      y = H - MT
+    }
+  }
 
   // Title
-  text(p1, 'WORK ORDER INVOICE', ML, y, 22, bold, NAVY)
+  text(pg, 'WORK ORDER INVOICE', ML, y, 22, bold, NAVY)
   const dateStr = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
   const invLabel = 'Invoice #: ' + invoiceNum
-  text(p1, invLabel, W - MR - bold.widthOfTextAtSize(invLabel, 10), y, 10, bold, MGRAY)
+  text(pg, invLabel, W - MR - bold.widthOfTextAtSize(invLabel, 10), y, 10, bold, MGRAY)
   y -= 16
   const dateLabel = 'Date: ' + dateStr
-  text(p1, dateLabel, W - MR - regular.widthOfTextAtSize(dateLabel, 9), y, 9, regular, MGRAY)
+  text(pg, dateLabel, W - MR - regular.widthOfTextAtSize(dateLabel, 9), y, 9, regular, MGRAY)
   y -= 8
-  drawLine(p1, ML, y, W - MR, y, RED, 2)
+  drawLine(pg, ML, y, W - MR, y, RED, 2)
   y -= 20
 
   // PAY TO / INVOICE TO boxes
   const boxH = 100, boxW = (CW - 16) / 2
-  drawRect(p1, ML, y - boxH, boxW, boxH, LGRAY, BORDER, 0.75)
-  text(p1, 'PAY TO:', ML + 10, y - 14, 8, bold, MGRAY)
-  text(p1, personName, ML + 10, y - 30, 12, bold, NAVY)
-  if (rateType === 'hourly' && hourlyRate) text(p1, 'Rate: $' + parseFloat(hourlyRate).toFixed(2) + '/hr', ML + 10, y - 48, 9, regular, DGRAY)
-  if (rateType === 'flat') text(p1, 'Flat Rate', ML + 10, y - 48, 9, regular, DGRAY)
+  drawRect(pg, ML, y - boxH, boxW, boxH, LGRAY, BORDER, 0.75)
+  text(pg, 'PAY TO:', ML + 10, y - 14, 8, bold, MGRAY)
+  text(pg, personName, ML + 10, y - 30, 12, bold, NAVY)
+  if (rateType === 'hourly' && hourlyRate) text(pg, 'Rate: $' + parseFloat(hourlyRate).toFixed(2) + '/hr', ML + 10, y - 48, 9, regular, DGRAY)
+  if (rateType === 'flat') text(pg, 'Flat Rate', ML + 10, y - 48, 9, regular, DGRAY)
 
   const rx = ML + boxW + 16
-  drawRect(p1, rx, y - boxH, boxW, boxH, WHITE, BORDER, 0.75)
-  text(p1, 'INVOICE TO:', rx + 10, y - 14, 8, bold, MGRAY)
-  text(p1, 'Simon Express', rx + 10, y - 30, 12, bold, NAVY)
-  text(p1, 'PO Box 1582', rx + 10, y - 46, 9, regular, DGRAY)
-  text(p1, 'Riverton, UT 84065', rx + 10, y - 59, 9, regular, DGRAY)
-  text(p1, 'Phone: 801-260-7010', rx + 10, y - 72, 9, regular, DGRAY)
+  drawRect(pg, rx, y - boxH, boxW, boxH, WHITE, BORDER, 0.75)
+  text(pg, 'INVOICE TO:', rx + 10, y - 14, 8, bold, MGRAY)
+  text(pg, 'Simon Express', rx + 10, y - 30, 12, bold, NAVY)
+  text(pg, 'PO Box 1582', rx + 10, y - 46, 9, regular, DGRAY)
+  text(pg, 'Riverton, UT 84065', rx + 10, y - 59, 9, regular, DGRAY)
+  text(pg, 'Phone: 801-260-7010', rx + 10, y - 72, 9, regular, DGRAY)
   y -= boxH + 20
 
   // Job details strip
-  drawRect(p1, ML, y - 26, CW, 26, NAVY, undefined)
-  text(p1, 'Unit: ' + unitNumber, ML + 10, y - 17, 9, bold, WHITE)
-  text(p1, 'Date Completed: ' + dateCompleted, ML + 130, y - 17, 9, bold, WHITE)
+  drawRect(pg, ML, y - 26, CW, 26, NAVY, undefined)
+  text(pg, 'Unit: ' + unitNumber, ML + 10, y - 17, 9, bold, WHITE)
+  text(pg, 'Date Completed: ' + dateCompleted, ML + 130, y - 17, 9, bold, WHITE)
   if (personKey === 'split') {
     const spLabel = 'SPLIT PAY INVOICE'
-    text(p1, spLabel, W - MR - bold.widthOfTextAtSize(spLabel, 8) - 10, y - 17, 8, bold, RED)
+    text(pg, spLabel, W - MR - bold.widthOfTextAtSize(spLabel, 8) - 10, y - 17, 8, bold, RED)
   }
   y -= 26
 
   // Line items table header
   const COL_DESC = ML, COL_HRS = W - MR - 180, COL_RATE = W - MR - 100, COL_AMT = W - MR - 10, RROW = 22
-  drawRect(p1, ML, y - RROW, CW, RROW, LGRAY, BORDER, 0.5)
-  text(p1, 'DESCRIPTION', COL_DESC + 8, y - 15, 8, bold, MGRAY)
-  text(p1, 'HRS',         COL_HRS,      y - 15, 8, bold, MGRAY)
-  text(p1, 'RATE',        COL_RATE,     y - 15, 8, bold, MGRAY)
+  drawRect(pg, ML, y - RROW, CW, RROW, LGRAY, BORDER, 0.5)
+  text(pg, 'DESCRIPTION', COL_DESC + 8, y - 15, 8, bold, MGRAY)
+  text(pg, 'HRS',         COL_HRS,      y - 15, 8, bold, MGRAY)
+  text(pg, 'RATE',        COL_RATE,     y - 15, 8, bold, MGRAY)
   const amtW = bold.widthOfTextAtSize('AMOUNT', 8)
-  text(p1, 'AMOUNT', COL_AMT - amtW, y - 15, 8, bold, MGRAY)
+  text(pg, 'AMOUNT', COL_AMT - amtW, y - 15, 8, bold, MGRAY)
   y -= RROW
 
   // Line item rows
@@ -143,44 +183,50 @@ async function buildInvoicePdf(data, invoiceNum) {
     grandTotal += lineAmt
 
     const rowBg = idx % 2 === 0 ? WHITE : rgb(0.97, 0.97, 0.97)
-    drawRect(p1, ML, y - 24, CW, 24, rowBg, BORDER, 0.5)
-    wrapText(item.description || '', regular, 9, COL_HRS - COL_DESC - 16).slice(0, 2).forEach(function(l, li) {
-      text(p1, l, COL_DESC + 8, y - 10 - li * 11, 9, regular, BLACK)
+    // Row grows to fit the whole description (it used to be cut off at 2 lines).
+    const descLines = wrapText(item.description || '', regular, 9, COL_HRS - COL_DESC - 16).slice(0, 55)
+    const rowH = Math.max(24, descLines.length * 11 + 13)
+    need(rowH)
+    drawRect(pg, ML, y - rowH, CW, rowH, rowBg, BORDER, 0.5)
+    descLines.forEach(function(l, li) {
+      text(pg, l, COL_DESC + 8, y - 10 - li * 11, 9, regular, BLACK)
     })
 
     // HRS col: always show if entered; grey if using flat rate
-    text(p1, hrs > 0 ? hrs.toFixed(2) : '-', COL_HRS, y - 10, 9, regular, useFlatRate ? MGRAY : BLACK)
+    text(pg, hrs > 0 ? hrs.toFixed(2) : '-', COL_HRS, y - 10, 9, regular, useFlatRate ? MGRAY : BLACK)
     // RATE col: show hourly rate if using hourly, dash if flat
     if (!useFlatRate && rateType === 'hourly' && hourlyRateVal > 0) {
-      text(p1, '$' + hourlyRateVal.toFixed(2), COL_RATE, y - 10, 9, regular, BLACK)
+      text(pg, '$' + hourlyRateVal.toFixed(2), COL_RATE, y - 10, 9, regular, BLACK)
     } else {
-      text(p1, '-', COL_RATE, y - 10, 9, regular, MGRAY)
+      text(pg, '-', COL_RATE, y - 10, 9, regular, MGRAY)
     }
     // AMOUNT col
     const amtStr = lineAmt > 0 ? '$' + lineAmt.toFixed(2) : '-'
     const aw = regular.widthOfTextAtSize(amtStr, 9)
-    text(p1, amtStr, COL_AMT - aw, y - 10, 9, regular, BLACK)
-    y -= 24
+    text(pg, amtStr, COL_AMT - aw, y - 10, 9, regular, BLACK)
+    y -= rowH
   })
 
   // Totals
+  need(100)
   y -= 10
-  drawLine(p1, COL_RATE - 20, y, W - MR, y, BORDER, 0.75)
+  drawLine(pg, COL_RATE - 20, y, W - MR, y, BORDER, 0.75)
   y -= 16
   const effectiveTotal = rateType === 'flat' ? parseFloat(flatAmount || totalAmount || grandTotal) : grandTotal
   const totalStr = '$' + effectiveTotal.toFixed(2)
-  text(p1, 'TOTAL DUE', W - MR - bold.widthOfTextAtSize('TOTAL DUE', 9), y, 9, bold, MGRAY)
+  text(pg, 'TOTAL DUE', W - MR - bold.widthOfTextAtSize('TOTAL DUE', 9), y, 9, bold, MGRAY)
   y -= 26
   const tw = bold.widthOfTextAtSize(totalStr, 22)
-  text(p1, totalStr, W - MR - tw, y, 22, bold, RED)
+  text(pg, totalStr, W - MR - tw, y, 22, bold, RED)
   y -= 40
 
   // Hourly summary bar
   if (rateType === 'hourly') {
+    need(30)
     const totalHrs = items.reduce((s, i) => s + (parseFloat(i.hours) || 0), 0)
     const summaryStr = 'Total Hours: ' + totalHrs.toFixed(2) + '  x  $' + hourlyRateVal.toFixed(2) + '/hr  =  $' + grandTotal.toFixed(2)
-    drawRect(p1, ML, y - 22, CW, 22, LGRAY, BORDER, 0.5)
-    text(p1, summaryStr, ML + 10, y - 14, 9, regular, DGRAY)
+    drawRect(pg, ML, y - 22, CW, 22, LGRAY, BORDER, 0.5)
+    text(pg, summaryStr, ML + 10, y - 14, 9, regular, DGRAY)
     y -= 22
   }
 
@@ -189,30 +235,31 @@ async function buildInvoicePdf(data, invoiceNum) {
     const totalDue = effectiveTotal
     const splitAmt = totalDue / 2
     const splitStr = '$' + splitAmt.toFixed(2)
+    need(130)
     y -= 10
-    drawRect(p1, ML, y - 26, CW, 26, NAVY, undefined)
-    text(p1, 'PAYMENT BREAKDOWN  -  50/50 SPLIT', ML + 10, y - 17, 9, bold, WHITE)
+    drawRect(pg, ML, y - 26, CW, 26, NAVY, undefined)
+    text(pg, 'PAYMENT BREAKDOWN  -  50/50 SPLIT', ML + 10, y - 17, 9, bold, WHITE)
     const spW = bold.widthOfTextAtSize('SPLIT PAY INVOICE', 8)
-    text(p1, 'SPLIT PAY INVOICE', W - MR - spW - 10, y - 17, 8, bold, RED)
+    text(pg, 'SPLIT PAY INVOICE', W - MR - spW - 10, y - 17, 8, bold, RED)
     y -= 26
     const bw = (CW - 10) / 2
     // Jaden box
-    drawRect(p1, ML, y - 80, bw, 80, rgb(0.97, 0.97, 1.0), BORDER, 0.75)
-    drawRect(p1, ML, y - 22, bw, 22, rgb(0.2, 0.2, 0.35), undefined)
-    text(p1, 'PAY TO', ML + 8, y - 14, 7, bold, rgb(0.6, 0.7, 0.9))
-    text(p1, 'Jaden Simon', ML + 8, y - 38, 11, bold, NAVY)
-    text(p1, '50% of Total Invoice', ML + 8, y - 52, 8, regular, DGRAY)
+    drawRect(pg, ML, y - 80, bw, 80, rgb(0.97, 0.97, 1.0), BORDER, 0.75)
+    drawRect(pg, ML, y - 22, bw, 22, rgb(0.2, 0.2, 0.35), undefined)
+    text(pg, 'PAY TO', ML + 8, y - 14, 7, bold, rgb(0.6, 0.7, 0.9))
+    text(pg, 'Jaden Simon', ML + 8, y - 38, 11, bold, NAVY)
+    text(pg, '50% of Total Invoice', ML + 8, y - 52, 8, regular, DGRAY)
     const jsw = bold.widthOfTextAtSize(splitStr, 18)
-    text(p1, splitStr, ML + bw - jsw - 8, y - 68, 18, bold, RED)
+    text(pg, splitStr, ML + bw - jsw - 8, y - 68, 18, bold, RED)
     // Jordan box
     const rx2 = ML + bw + 10
-    drawRect(p1, rx2, y - 80, bw, 80, rgb(0.97, 0.97, 1.0), BORDER, 0.75)
-    drawRect(p1, rx2, y - 22, bw, 22, rgb(0.2, 0.2, 0.35), undefined)
-    text(p1, 'PAY TO', rx2 + 8, y - 14, 7, bold, rgb(0.6, 0.7, 0.9))
-    text(p1, 'Jordan Simon', rx2 + 8, y - 38, 11, bold, NAVY)
-    text(p1, '50% of Total Invoice', rx2 + 8, y - 52, 8, regular, DGRAY)
+    drawRect(pg, rx2, y - 80, bw, 80, rgb(0.97, 0.97, 1.0), BORDER, 0.75)
+    drawRect(pg, rx2, y - 22, bw, 22, rgb(0.2, 0.2, 0.35), undefined)
+    text(pg, 'PAY TO', rx2 + 8, y - 14, 7, bold, rgb(0.6, 0.7, 0.9))
+    text(pg, 'Jordan Simon', rx2 + 8, y - 38, 11, bold, NAVY)
+    text(pg, '50% of Total Invoice', rx2 + 8, y - 52, 8, regular, DGRAY)
     const jrw = bold.widthOfTextAtSize(splitStr, 18)
-    text(p1, splitStr, rx2 + bw - jrw - 8, y - 68, 18, bold, RED)
+    text(pg, splitStr, rx2 + bw - jrw - 8, y - 68, 18, bold, RED)
     y -= 90
   }
 
@@ -221,67 +268,79 @@ async function buildInvoicePdf(data, invoiceNum) {
   if (partsArr.length > 0) {
     const partsSum = partsArr.reduce(function (s, p) { return s + (parseFloat(p.cost) || 0) }, 0)
     const PC_VEND = ML + CW * 0.5
+    need(80)
     y -= 16
-    drawRect(p1, ML, y - 22, CW, 22, NAVY, undefined)
-    text(p1, 'PARTS / MATERIALS  (COMPANY-PAID)', ML + 10, y - 15, 9, bold, WHITE)
+    drawRect(pg, ML, y - 22, CW, 22, NAVY, undefined)
+    text(pg, 'PARTS / MATERIALS  (COMPANY-PAID)', ML + 10, y - 15, 9, bold, WHITE)
     const phLbl = 'NOT INCLUDED IN PAYOUT'
-    text(p1, phLbl, W - MR - bold.widthOfTextAtSize(phLbl, 7) - 10, y - 15, 7, bold, rgb(0.7, 0.8, 0.95))
+    text(pg, phLbl, W - MR - bold.widthOfTextAtSize(phLbl, 7) - 10, y - 15, 7, bold, rgb(0.7, 0.8, 0.95))
     y -= 22
-    drawRect(p1, ML, y - 18, CW, 18, LGRAY, BORDER, 0.5)
-    text(p1, 'PART', ML + 8, y - 12, 7.5, bold, MGRAY)
-    text(p1, 'VENDOR', PC_VEND, y - 12, 7.5, bold, MGRAY)
-    text(p1, 'COST', COL_AMT - bold.widthOfTextAtSize('COST', 7.5), y - 12, 7.5, bold, MGRAY)
+    drawRect(pg, ML, y - 18, CW, 18, LGRAY, BORDER, 0.5)
+    text(pg, 'PART', ML + 8, y - 12, 7.5, bold, MGRAY)
+    text(pg, 'VENDOR', PC_VEND, y - 12, 7.5, bold, MGRAY)
+    text(pg, 'COST', COL_AMT - bold.widthOfTextAtSize('COST', 7.5), y - 12, 7.5, bold, MGRAY)
     y -= 18
     partsArr.forEach(function (p, idx) {
-      if (y < 96) return
+      need(16)
       const c = parseFloat(p.cost) || 0
       const cStr = '$' + c.toFixed(2)
-      if (idx % 2 === 1) drawRect(p1, ML, y - 16, CW, 16, rgb(0.97, 0.97, 0.97), undefined)
-      text(p1, String(p.description || '-').slice(0, 46), ML + 8, y - 11, 9, regular, BLACK)
-      text(p1, String(p.vendor || '-').slice(0, 26), PC_VEND, y - 11, 9, regular, DGRAY)
-      text(p1, cStr, COL_AMT - regular.widthOfTextAtSize(cStr, 9), y - 11, 9, regular, BLACK)
+      if (idx % 2 === 1) drawRect(pg, ML, y - 16, CW, 16, rgb(0.97, 0.97, 0.97), undefined)
+      text(pg, String(p.description || '-').slice(0, 46), ML + 8, y - 11, 9, regular, BLACK)
+      text(pg, String(p.vendor || '-').slice(0, 26), PC_VEND, y - 11, 9, regular, DGRAY)
+      text(pg, cStr, COL_AMT - regular.widthOfTextAtSize(cStr, 9), y - 11, 9, regular, BLACK)
       y -= 16
     })
-    drawLine(p1, COL_RATE - 20, y, W - MR, y, BORDER, 0.5)
+    need(64)
+    drawLine(pg, COL_RATE - 20, y, W - MR, y, BORDER, 0.5)
     y -= 14
     const psStr = '$' + partsSum.toFixed(2)
-    text(p1, 'PARTS SUBTOTAL', COL_RATE - 20, y, 8, bold, MGRAY)
-    text(p1, psStr, W - MR - regular.widthOfTextAtSize(psStr, 9), y, 9, bold, DGRAY)
+    text(pg, 'PARTS SUBTOTAL', COL_RATE - 20, y, 8, bold, MGRAY)
+    text(pg, psStr, W - MR - regular.widthOfTextAtSize(psStr, 9), y, 9, bold, DGRAY)
     y -= 20
     const jobLabor = parseFloat(totalAmount || 0)
     const jobTotal = jobLabor + partsSum
-    drawRect(p1, ML, y - 22, CW, 22, rgb(0.93, 0.95, 0.98), BORDER, 0.5)
+    drawRect(pg, ML, y - 22, CW, 22, rgb(0.93, 0.95, 0.98), BORDER, 0.5)
     const jtStr = 'Labor $' + jobLabor.toFixed(2) + '   +   Parts $' + partsSum.toFixed(2) + '   =   Total Job Cost $' + jobTotal.toFixed(2)
-    text(p1, jtStr, ML + 10, y - 15, 9, bold, NAVY)
+    text(pg, jtStr, ML + 10, y - 15, 9, bold, NAVY)
     y -= 22
   }
 
   // Notes
   if (data.notes && data.notes.trim()) {
-    y -= 14
-    drawRect(p1, ML, y - 18, CW, 18, NAVY, undefined)
-    text(p1, 'NOTES', ML + 10, y - 12, 8, bold, WHITE)
-    y -= 18
     const noteLines = wrapText(data.notes.trim(), regular, 9.5, CW - 20)
-    const notesBoxH = Math.max(36, noteLines.length * 14 + 16)
-    drawRect(p1, ML, y - notesBoxH, CW, notesBoxH, LGRAY, BORDER, 0.5)
-    noteLines.forEach(function(l, i) {
-      const ly = y - 12 - i * 14
-      if (ly > y - notesBoxH + 4) text(p1, l, ML + 10, ly, 9.5, regular, DGRAY)
+    need(14 + 18 + 36)
+    y -= 14
+    drawRect(pg, ML, y - 18, CW, 18, NAVY, undefined)
+    text(pg, 'NOTES', ML + 10, y - 12, 8, bold, WHITE)
+    y -= 18
+    // Drawn a line at a time so long notes continue onto the next page.
+    drawRect(pg, ML, y - 6, CW, 6, LGRAY, undefined)
+    y -= 6
+    noteLines.forEach(function(l) {
+      need(14)
+      drawRect(pg, ML, y - 14, CW, 14, LGRAY, undefined)
+      text(pg, l, ML + 10, y - 10, 9.5, regular, DGRAY)
+      y -= 14
     })
-    y -= notesBoxH
+    drawRect(pg, ML, y - 6, CW, 6, LGRAY, undefined)
+    y -= 6
   }
 
   // Photo note
   if (photos && photos.length > 0) {
+    need(20)
     y -= 14
-    text(p1, photos.length + ' photo' + (photos.length > 1 ? 's' : '') + ' attached - see following page' + (photos.length > 1 ? 's' : ''), ML, y, 8, oblique, MGRAY)
+    text(pg, photos.length + ' photo' + (photos.length > 1 ? 's' : '') + ' attached - see following page' + (photos.length > 1 ? 's' : ''), ML, y, 8, oblique, MGRAY)
   }
 
-  // Footer
-  drawLine(p1, ML, 44, W - MR, 44, BORDER, 0.5)
-  text(p1, 'Simon Express Work Order  |  ' + invoiceNum, ML, 30, 7.5, regular, MGRAY)
-  text(p1, 'Page 1 of ' + ((photos ? photos.length : 0) + 1), W - MR - 60, 30, 7.5, regular, MGRAY)
+  // Footer on every content page
+  const photoCount = photos ? photos.length : 0
+  const totalPages = contentPages.length + photoCount
+  contentPages.forEach(function (cp, ci) {
+    drawLine(cp, ML, 44, W - MR, 44, BORDER, 0.5)
+    text(cp, 'Simon Express Work Order  |  ' + invoiceNum, ML, 30, 7.5, regular, MGRAY)
+    text(cp, 'Page ' + (ci + 1) + ' of ' + totalPages, W - MR - 60, 30, 7.5, regular, MGRAY)
+  })
 
   // Photo pages
   if (photos && photos.length > 0) {
@@ -306,7 +365,7 @@ async function buildInvoicePdf(data, invoiceNum) {
       }
       drawLine(pp, ML, 44, W - MR, 44, BORDER, 0.5)
       text(pp, 'Simon Express Work Order  |  ' + invoiceNum, ML, 30, 7.5, regular, MGRAY)
-      text(pp, 'Page ' + (pi + 2) + ' of ' + (photos.length + 1), W - MR - 60, 30, 7.5, regular, MGRAY)
+      text(pp, 'Page ' + (contentPages.length + pi + 1) + ' of ' + totalPages, W - MR - 60, 30, 7.5, regular, MGRAY)
     }
   }
 
