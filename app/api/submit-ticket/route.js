@@ -1,5 +1,6 @@
 import { Resend } from 'resend'
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
+import { kpiUrl } from '../../../lib/kpi'
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
@@ -340,26 +341,34 @@ export async function POST(request) {
     }
     const effectiveFlatAmount = anyLineItemRates ? lineItemRatesSum.toFixed(2) : (flatAmount || '0')
 
-    // Invoice counter
-    let invoiceNum = 'WO-0001'
+    // Invoice number. kpi hands these out from a Postgres sequence, so each
+    // number is issued exactly once. (The old Edge Config counter was a
+    // read-then-write: two work orders 26s apart both got WO-0141 on 11/16/26.)
+    // If kpi can't be reached, fall back to a timestamp-based number, which is
+    // unique and can't collide with the 4-digit sequence numbers.
+    let invoiceNum = ''
     try {
-      const ecId     = process.env.EDGE_CONFIG_ID
-      const ecToken  = process.env.EDGE_CONFIG_TOKEN
-      const apiToken = process.env.VERCEL_API_TOKEN
-      const teamId   = process.env.VERCEL_TEAM_ID
-      const readRes  = await fetch(`https://edge-config.vercel.com/${ecId}/item/invoiceCounter?token=${ecToken}`)
-      const current  = readRes.ok ? (await readRes.json()) : 0
-      const next     = (parseInt(current) || 0) + 1
-      invoiceNum     = 'WO-' + String(next).padStart(4, '0')
-      const teamParam = teamId ? `?teamId=${teamId}` : ''
-      await fetch(`https://api.vercel.com/v1/edge-config/${ecId}/items${teamParam}`, {
-        method: 'PATCH',
-        headers: { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: [{ operation: 'upsert', key: 'invoiceCounter', value: next }] }),
+      const numUrl = kpiUrl('/api/admin/wo-intake/next-number')
+      const numSecret = process.env.KPI_SYNC_SECRET
+      if (!numUrl || !numSecret) throw new Error('KPI_SYNC_URL / KPI_SYNC_SECRET not set')
+      const ctrl = new AbortController()
+      const t = setTimeout(() => ctrl.abort(), 8000)
+      const numRes = await fetch(numUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-wo-secret': numSecret },
+        body: '{}',
+        cache: 'no-store',
+        signal: ctrl.signal,
       })
+      clearTimeout(t)
+      const numJson = numRes.ok ? await numRes.json() : null
+      if (!numJson || !/^WO-\d{4,}$/.test(numJson.invoiceNum || '')) {
+        throw new Error('next-number returned HTTP ' + numRes.status)
+      }
+      invoiceNum = numJson.invoiceNum
     } catch (e) {
-      console.error('Edge Config error:', e)
-      invoiceNum = 'WO-' + Date.now().toString().slice(-6)
+      console.error('WO number allocation failed, using timestamp fallback:', e && e.message ? e.message : e)
+      invoiceNum = 'WO-T' + Date.now().toString(36).toUpperCase()
     }
 
     const pdfBuffer = await buildInvoicePdf({ ...body, dateCompleted, totalAmount, notes, flatAmount: effectiveFlatAmount }, invoiceNum)
